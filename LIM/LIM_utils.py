@@ -154,6 +154,22 @@ def Nyquist_check(data,tau0):
 
 
 def Q_test(Q,Q_plot="no"):
+    '''
+Q test - checks to make sure eigenvalues of Q are positive.
+If Q_plot is set to "yes", a plot of the diagonal matrix of Q eigenvalues will be produced.
+
+Inputs
+    Q      - the Q matrix from LIM
+    Q_plot - "yes" or "no" - whether or not to plot the diagonal matrix of Q eigenvalues
+Outputs
+    None - prints out whether or not eigenvalues of Q are positive, and optionally plots diagonal
+              matrix of Q eigenvalues.
+              
+remember: If Q has negative eigenvalues, it does not mean the LIM is unusable. The negative values 
+mainly for some reasons, including noise, nonlinearly and so on. 
+You can remove the negative eigenvalues and referred eigenvectors. But it may affect the accuracy of LIM.
+    
+'''
     import numpy 
     from numpy import linalg as LA
     import matplotlib.pyplot as plt
@@ -189,10 +205,18 @@ def Q_test(Q,Q_plot="no"):
             )
         plt.show()
 
-def Tau_test(data,tau0):
-    #The tau test is passed if the results are not overly sensitive to the choice of tau0. 
-    #So the lines plotted below should be close enough (with what determines 'close enough' determined by the user).
+def tau_test1(data,tau0):
+    '''
+    tau_test: if diff tau' error_variance are close enough, 
+                the tau test is passed.
 
+    Inputs
+        data  - initial state vector, numpy array
+        tau0  - used tau0
+
+    Outputs
+        None - a plot of lines of error covariance.
+    '''
     import numpy as np
     from numpy import linalg as LA
     import matplotlib.pyplot as plt
@@ -246,8 +270,6 @@ def Tau_test(data,tau0):
     for iT0 in range(len(lags)):
         ax1.plot(tau_arr, norm_epsilon[iT0,:],label = r'$\tau_{0} = $'+str(lags[iT0]))
 
-    #ax1.set_xlabel(r'$\tau $',fontsize=16)
-    #ax1.set_ylabel(r'$\epsilon^{2} (\tau , \tau_0 ) $',fontsize=16)
     ax1.set_xlabel('Lead time (days)',fontsize=16)
     ax1.set_ylabel('Normalized error variance',fontsize=16)
     ax1.legend(fontsize=14)
@@ -258,10 +280,18 @@ def Tau_test(data,tau0):
     #ax1.grid()
     plt.show()
 
+def tau_test2(data,tau0,yupper):
+    '''
+    tau_test: if diff_dims L's norms are close enough, 
+                the tau test is passed.
 
-def tau_test(data,tau0,yupper):
-    #The tau test is passed if the results are not overly sensitive to the choice of tau0. 
-    #So the lines plotted below should be close enough (with what determines 'close enough' determined by the user).
+    Inputs
+        data  - initial state vector, numpy array
+        tau0  - used tau0
+
+    Outputs
+        None - a plot of lines of error covariance.
+    '''
 
     import numpy as np
     from numpy import linalg as LA
@@ -305,8 +335,19 @@ def tau_test(data,tau0,yupper):
     plt.show()
 
 
-def heatmap(data,tau0):
-    #The tau test is passed if the results are not overly sensitive to the choice of tau0. 
+def tau_test3(data,tau0):
+    '''
+    tau_test: if diff tau's L are close enough, 
+                the tau test is passed.
+
+    Inputs
+        data  - initial state vector, numpy array
+        tau0  - used tau0
+
+    Outputs
+        None - a plot of heatmaps of L.
+    ''' 
+
     import numpy as np
     from numpy import linalg as LA
     import matplotlib.pyplot as plt
@@ -334,8 +375,7 @@ def heatmap(data,tau0):
     #set up plots
     fig, axes = plt.subplots(2, 3, figsize=(10, 10))
     plt.rcParams.update({'font.size': 12})
-    #fig.subplots_adjust(hspace = 0.2,wspace=0.2)
-    # 绘制每个子图
+
     for i, ax in enumerate(axes.flat):
         im = ax.pcolor(
             L_list[i], 
@@ -349,24 +389,7 @@ def heatmap(data,tau0):
         ax.xaxis.tick_top()
         ax.set_xticks([])  # remove x tickers
         ax.set_yticks([])  # remove y tickers
-        # Set up labels and tick marks - x axis
-        #ax.set_xticks(np.arange(data.shape[0]+1))
-        # Hide major tick labels
-        #ax.xaxis.set_major_formatter(ticker.NullFormatter())
-        # Customize minor tick labels
-        #ax.xaxis.set_minor_locator(ticker.FixedLocator(np.arange(data.shape[0])+0.5))
-        #ax.xaxis.set_minor_formatter(ticker.FixedFormatter(stationIDs))
-        #FormatStrFormatter("%d")
-        # Set up labels and tick marks - y axis
-        #ax.set_yticks(np.arange(data.shape[0]+1))
-        # Hide major tick labels
-        #ax.yaxis.set_major_formatter(ticker.NullFormatter())
-        # Customize minor tick labels
-        #ax.yaxis.set_minor_locator(ticker.FixedLocator(np.arange(data.shape[0])+0.5))
-        #FormatStrFormatter("%d")
-        #ax.yaxis.set_minor_formatter(ticker.FixedFormatter(stationIDs))
-        #ax.tick_params(which='both',labelsize=14)
-        
+     
     cbar = fig.colorbar(
         im, 
         ax=axes.ravel().tolist(),
@@ -375,8 +398,57 @@ def heatmap(data,tau0):
         aspect=20,                       
     )
 
-    # 保存图像
+    # keep image
     plt.show()
+
+def tau_test4(x,L,c0):
+    '''
+    tau_test: if traces of observation and LIM are close enough, 
+                the tau test is passed.
+
+    Inputs
+        x   - state vector, numpy array, [n,nt]
+        L   - the matrix of L values, numpy array, [n,n]
+        c0  - lag-0 covariance matrix, numpy array, [n,n]
+
+    Outputs
+        None - a plot of trace of lagged covariance matrix from observations and LIM.
+    '''
+    import numpy
+    import matplotlib.pyplot as plt
+    from scipy.linalg import expm
+
+    Tau = numpy.arange(1,31,1)
+    tr  = numpy.zeros([2,Tau.shape[0]])
+
+    for i,tau in enumerate(Tau):
+        #original
+        x0 = numpy.copy(x[:,:-tau])
+        xt = numpy.copy(x[:,tau:])
+        ct = numpy.dot(xt, x0.T)/(x0.shape[1]-1)
+        tr[0,i] = numpy.trace(ct)
+        #LIM prediction
+        F = numpy.dot(expm(L.real*tau),c0)
+        tr[1,i] = numpy.trace(F)
+
+    # Set up plot 
+    fig, ax = plt.subplots()
+    fig.set_size_inches(12,8)
+
+    # Plot each line for various choices of tau0 
+    colors = ["red","blue"]
+    labels = ["OBS-based","LIM-based"]
+    for iT0 in range(2):
+        ax.plot(Tau, tr[iT0,:],label=labels[iT0],color=colors[iT0])
+        ax.set_xlabel(r'$\tau_{0}$',fontsize=16)
+        ax.set_ylabel('Norm',fontsize=16)
+        ax.set_title('tau_test',fontsize=16)
+        ax.set_xlim([1,30])
+        ax.set_xticks(ticks=[1,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30])
+        ax.tick_params(labelsize=14)
+
+    plt.legend()
+    plt.show()   
 
 
 def Error_test(datat,tau0,unit_days,split_num):
@@ -462,10 +534,6 @@ def Error_test(datat,tau0,unit_days,split_num):
     actual_error = np.nanmean(meanErr_fcst, axis=1)
     #Normalize by the variance at each station 
     actual_error  = actual_error/np.nansum(np.nanvar(dat,axis=1))
-    #print(actual_error)
-    #print(expected_error)
-
-
 
     # --- ERRORS THAT ARISE FROM A SIMPLE AR1 PROCESS --- #
     from statsmodels.tsa.api import VAR
@@ -519,15 +587,11 @@ def Error_test(datat,tau0,unit_days,split_num):
     ax1.plot(tau_arr, actual_error,color='orange',linestyle='solid',label='LIM error')
     ax1.plot(tau_arr, AR1pro_error,color='blue',linestyle='solid',label='AR(1) error')
     ax1.plot(tau_arr, persis_error,color='red',linestyle='solid',label='Persis error')
-    #ax1.set_xlabel(r'$\tau $',fontsize=16)
-    #ax1.set_ylabel(r'$\epsilon^{2} (\tau , \tau_0 ) $',fontsize=16)
     ax1.set_xlabel('Lead time (days)',fontsize=16)
     ax1.set_ylabel('Normalized error variance',fontsize=16)
     ax1.legend(fontsize=14)
-    #ax1.set_title('Expected Error',fontsize=16)
     ax1.set_xlim([0,max(tau_arr)])
     ax1.set_ylim([0,2.5])
-    #ax1.set_ylim([0,np.max(new_epsilon)+(0.05*np.max(new_epsilon))])
     ax1.tick_params(labelsize=14)
     ax1.grid(False)
     plt.show()
@@ -535,21 +599,19 @@ def Error_test(datat,tau0,unit_days,split_num):
 
 def optimal_state(g,u,v,N,tau,tau0):
     '''
-calculate optimal state and growth rate.
-(Breeden et al. 2020 MWR)
-Inputs
-    g: eigenvalues of G.
-    u: eigenvector of L or G.
-    v: adjoint eivector of L or G.
-    N: norm. the expected growth direction.
-    tau: tau.
-    tau0: tau used to train this LIM.
+    calculate optimal state and growth rate.(Breeden et al. 2020 MWR)
+    Inputs
+        g: eigenvalues of G.
+        u: eigenvector of L or G.
+        v: adjoint eivector of L or G.
+        N: norm. the expected growth direction.
+        tau: tau.
+        tau0: tau used to train this LIM.
 
-Outputs
-    p: optimal state.
-    g_rate: growth rate.
-
-'''
+    Outputs
+        p: optimal state.
+        g_rate: growth rate.
+    '''
     import numpy
     from numpy import linalg as LA
 
@@ -571,19 +633,19 @@ Outputs
 
 def forecast(g,u,v,tau0,x0,tau):
     '''
-forecast by LIM.
-Inputs
-    g: eigenvalues of G.
-    u: eigenvector of L or G.
-    v: adjoint eivector of L or G.
-    tau: tau.
-    tau0: tau used to train this LIM.
-    x0: initial state.
+    deterministic forecast by LIM.
+    Inputs
+        g: eigenvalues of G.
+        u: eigenvector of L or G.
+        v: adjoint eivector of L or G.
+        tau: tau.
+        tau0: tau used to train this LIM.
+        x0: initial state.
 
-Outputs
-    x: forecast state.
+    Outputs
+        x: forecast state.
+    '''
 
-'''
     import numpy as np
     from numpy import linalg as LA
 
@@ -599,19 +661,18 @@ Outputs
 
 def long_run(L, Q, delta, N):
     '''
-Linear Inverse Modeling long-time run
-(Henderson et al. 2020 JC  Penland and Matrosova 1994 JC)
-delta is a time step.
-X is state vector and Y is intermediate vector.
-L is a dynamical calculator.
-q is error-martrix eig vector with yi is eig value.
+    Linear Inverse Modeling long-time run or stochastic forecast.(Henderson et al. 2020 JC  Penland and Matrosova 1994 JC)
+    Inputs
+        delta - a time step. (integrated delta; is not the tau0 used to train LIM)
+        X - state vector and Y is intermediate vector.
+        L - a dynamical calculator.
+        q - error-martrix eig vector with yi is eig value.
 
-firstly, we have
-Y(t+delta) = Y(t) + sigma(L[:,j]*Y[j]*delta) + sigma(q@sqrt[yi*delta])
-then 
-X(t+delta./2) = (Y(t+delta) + Y(t))/2
-    
-'''
+    firstly, we have
+        Y(t+delta) = Y(t) + sigma(L[:,j]*Y[j]*delta) + sigma(q@sqrt[yi*delta])
+    then 
+        X(t+delta./2) = (Y(t+delta) + Y(t))/2   
+    '''
     import numpy
     from numpy import linalg as LA
     from numpy import random
