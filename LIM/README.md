@@ -13,7 +13,7 @@ tau_test1: ensure the dynamical operator is insensitive to the selection of tau.
 
 tau_test2: test by norms of diff **L**.
 
-tau_test3: draw **L**.
+tau_test3: test by drawing **L**.
 
 tau test4: test by traces between obs and LIM.
 
