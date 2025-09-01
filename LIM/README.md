@@ -7,7 +7,7 @@ LIM: main function to construt a LIM.
 
 Nyquist_check: check for Nyquist mode. It refers to sampling question: if the sampled frequency is less than the minimal oscillation, some illusory mode will appear.
 
-Q_test: ensure your LIM is accurately contrusted.
+Q_test: ensure your LIM is accurately contrusted. But doesn't pass do not mean your LIM is not useful.
 
 tau_test1: ensure the dynamical operator is insensitive to the selection of tau. by error variance.
 
