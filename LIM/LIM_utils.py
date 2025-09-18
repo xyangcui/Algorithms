@@ -658,10 +658,63 @@ def forecast(g,u,v,tau0,x0,tau):
     #G_tau = G**(tau/tau0)
     return (np.dot(G_tau.real,x0))
 
+def ens_fcst(L, Q, delta, X, freq='m'):
+    '''
+    LIM ensemble forecast.(Perkins and Hakim, 2021 P&P  Penland and Matrosova 1994 JC)
+    Inputs
+        delta - a time step. (hourly)
+        X - state vector and Y is intermediate vector.
+        L - a dynamical calculator.
+        Q - error-martrix.
+        freq - frequency used by your LIM (daily? d; monthly? m; yearly? y).
+
+    firstly, we have
+        Y(t+delta) = X(t) + sigma(L[:,j]*X[j]*delta) + sigma(q@sqrt[yi*delta])
+    then 
+        X(t+delta/2) = (Y(t+delta) + X(t))/2   
+    '''
+    import numpy
+    from numpy import linalg as LA
+    from numpy import random
+    # EVD for Q.
+    g, q = LA.eig(Q)
+
+    # which delta.
+    if freq == 'd':
+        delt = delta/24
+        n = 2 * 24//delta
+    elif freq == 'm':
+        delt = delta/720
+        n = 2 * 720//delta
+    else:
+        delt = delta/8640
+        n = 2 * 8640//delta
+
+    for t in range(n):
+        Y = X
+        # deterministic 
+        term1 = numpy.zeros(Y.shape[0])
+        for j in range(L.shape[1]):
+            term1 += L[:, j].real * Y[j] * delt
+
+        # stochastic
+        term2 = numpy.zeros(Y.shape[0])
+        R = random.normal(0, 1, Y.shape[0])
+        for i in range(q.shape[1]):
+            term2 += q[:, i].real * numpy.sqrt(g[i].real * delt) * R[i].real
+        # temporary
+        Y = X + term1 + term2
+        # final value for half-step forward.
+        X = (X + Y) * 0.5
+
+    # --------------------------------------------------------------------
+    # RETURN statement 
+    return X
 
 def long_run(L, Q, delta, N):
     '''
-    Linear Inverse Modeling long-time run or stochastic forecast.(Henderson et al. 2020 JC  Penland and Matrosova 1994 JC)
+    Linear Inverse Modeling long-time run.(Henderson et al. 2020 JC  Penland and Matrosova 1994 JC)
+    Free run.
     Inputs
         delta - a time step. (integrated delta; is not the tau0 used to train LIM)
         X - state vector and Y is intermediate vector.
@@ -679,7 +732,7 @@ def long_run(L, Q, delta, N):
     # EVD for Q.
     g, q = LA.eig(Q)
 
-    delta = 1 / 2.  # time unit
+    delta = delta / 24.  # time unit
     n = int(2 * N / delta)  # integrated times
 
     X = numpy.zeros((L.shape[0], n))
