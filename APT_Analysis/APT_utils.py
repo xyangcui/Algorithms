@@ -74,7 +74,6 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     for j in range(0,np.size(model_data[lead_dim_name])):
         sigma_tau[j,:,:] = np.mean([np.cov(y_reduced[j,:,i,:].transpose()) for i in range(np.size(model_data[time_dim_name]))], axis=0) * dtau[j]
 
-    sigma_inf = sigma_tau[46-2,:,:]
     # this is the parameter we are optimizing
     G = 2.0 * (sigma_inf * np.sum(dtau) - np.sum(sigma_tau,axis=0))
 
@@ -100,7 +99,10 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
 
     # predictable patterns | following DelSole and Tippett textbook
     P_Espace = sigma_inf @ Qnorm
-    P = E.values @ P_Espace
+    if eofs = None:
+        P = P_Espace  
+    else:
+        P = E.values @ P_Espace
     # predictable variates | one for each ensemble member and initialization
     PV = y_reduced.values @ Qnorm
 
@@ -131,7 +133,10 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     patterns = patterns_stacked.unstack()
 
     #un weighted.
-    patterns = patterns/weights
+    if eofs == None:
+        patterns = patterns
+    else:
+        patterns = patterns/weights
 
     # add attrs of variance y_ec_reduced[neofs,ntimes]; P_Espace[neofs,mode]
     variance = np.mean([np.dot(y_ec[:,i].values.transpose(),y_ec[:,i].values) for i in range(y_ec.values.shape[1])],axis=0)
@@ -141,7 +146,11 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
 
     # arrange the patterns in an xarray
     q_patterns_stacked = 0.0 * q_patterns.rename('projection_patterns').stack(space=(space_dim_names))
-    q_patterns_stacked.values = (E.values @ Qnorm).transpose() # without transpose, dimensions are space x mode
+    if eofs == None:
+        q_patterns_stacked.values = Qnorm.transpose() # without transpose, dimensions are space x mode
+    else:
+        q_patterns_stacked.values = (E.values @ Qnorm).transpose() # without transpose, dimensions are space x mode
+
     q_patterns = q_patterns_stacked.unstack()
 
     # Create an empty DataArray with specified dimensions and coordinates
@@ -159,5 +168,3 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     predictable_variates = predictable_variates.rename('v')
     # return the patterns and predictable variates
     return patterns, predictable_variates, apt, q_patterns, P_Espace
-
-
