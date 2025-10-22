@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 from scipy.linalg import eigh
 
-def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lead',ens_dim_name='member',time_dim_name='time',space_dim_names=['lat','lon']):
+def APT(model_data,eofs=None,dtau=None,weights=None,lead_dim_name='lead',ens_dim_name='member',time_dim_name='time',space_dim_names=['lat','lon']):
     """APT(model_data,eofs=None,dtau=None,weights=None,lead_dim_name='lead',ens_dim_name='member',time_dim_name='time',space_dim_names=['lat','lon'])
     function that maximizes Average Predictability Time (APT)
 
@@ -42,7 +42,7 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     if np.any(eofs == None):
 
         # move model data to [space x ensemble-lead-time] dimensions
-        y_ec_reduced = model_data.stack(space=(space_dim_names),ec=(lead_dim_name,ens_dim_name,time_dim_name)).values
+        y_ec_reduced = model_data.stack(space=(space_dim_names),ec=(lead_dim_name,ens_dim_name,time_dim_name))
 
     # otherwise, reduce dimensions using eof inputs
     else:
@@ -77,6 +77,16 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     # this is the parameter we are optimizing
     G = 2.0 * (sigma_inf * np.sum(dtau) - np.sum(sigma_tau,axis=0))
 
+    if np.any(np.diagonal(sigma_inf) == 0):
+        # semi-positive-definite martrix, so add a near zero number to make it a positive-definite martrix.
+        n = sigma_inf.shape[0]
+        sigma_inf = sigma_inf + 1e-8 * np.eye(n)
+
+    if np.any(np.diagonal(G) == 0):
+        # semi-positive-definite martrix, so add a near zero number to make it a positive-definite martrix.
+        n = G.shape[0]
+        G = G + 1e-8 * np.eye(n)
+
     # Solve the generalized eigenvalue problem
     #------------------------------------------------------------------------    
     # This will get the eigenvalues, l, and eigenvectors, Q, with dimensions [space x mode] for Q
@@ -99,10 +109,13 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
 
     # predictable patterns | following DelSole and Tippett textbook
     P_Espace = sigma_inf @ Qnorm
-    if eofs = None:
+
+    #control
+    if eofs == None:
         P = P_Espace  
     else:
         P = E.values @ P_Espace
+    
     # predictable variates | one for each ensemble member and initialization
     PV = y_reduced.values @ Qnorm
 
@@ -132,17 +145,12 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     patterns_stacked.values = P.transpose() # without transpose, dimensions are space x mode
     patterns = patterns_stacked.unstack()
 
-    #un weighted.
+    # if use eof, so un weighted. 
     if eofs == None:
         patterns = patterns
     else:
         patterns = patterns/weights
 
-    # add attrs of variance y_ec_reduced[neofs,ntimes]; P_Espace[neofs,mode]
-    variance = np.mean([np.dot(y_ec[:,i].values.transpose(),y_ec[:,i].values) for i in range(y_ec.values.shape[1])],axis=0)
-    varratio = np.dot(P.transpose(),P).diagonal() / variance
-    patterns.attrs['ratio'] = varratio
-    print(varratio)
 
     # arrange the patterns in an xarray
     q_patterns_stacked = 0.0 * q_patterns.rename('projection_patterns').stack(space=(space_dim_names))
@@ -163,8 +171,10 @@ def APT(model_data,eofs=None,dtau=None,weights=None,eval=None,lead_dim_name='lea
     # signal to noise ratio from eigenvalues
     apt = xr.DataArray(data=l,dims=["mode"],coords={"mode": mode})
     apt = apt.rename('apt')
+
     # fill the predictable variates array
     predictable_variates.values = PV
     predictable_variates = predictable_variates.rename('v')
+
     # return the patterns and predictable variates
     return patterns, predictable_variates, apt, q_patterns, P_Espace
