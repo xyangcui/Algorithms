@@ -1,0 +1,18 @@
+C NCLFORTSTART
+  subroutine tnf_xy(psiam,um,vm,dlati,dloni,mlat,mlon,prem,neqlats,neqlatn,tnf)
+  integer  mlon,mlat
+  real  dlati,dloni,prem  
+  integer  neqlats,neqlatn
+  real  um(mlon,mlat),vm(mlon,mlat),psiam(mlon,mlat),tnf(2,mlon,mlat)
+
+  real  unavl,ubmin,tday,erd 
+  real  u(mlon,mlat),v(mlon,mlat)
+  integer ilon,ilone,ilonw,ilat,ilatn,ilats
+  real  pai,dgrd,rloni,rloni2, rlati,rlati2,oum2
+  real  termxU,termxV,termyU,termyV
+  real  wspeed
+  real  dudx,dvdx,dudy,dvdy
+  real  rlat,coriol,coslat
+  real  uamn,uams,uame,uamw,vame,vamw,psiamn,psiams,psiame,psiamw
+  real  fx,fy,psia
+C NCLEND
