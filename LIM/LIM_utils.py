@@ -662,7 +662,7 @@ def ens_fcst(L, Q, delta, X, freq='m'):
     '''
     LIM ensemble forecast.(Perkins and Hakim, 2021 P&P  Penland and Matrosova 1994 JC)
     Inputs
-        delta - a time step. (hourly)
+        delta - a time step. (hours for instance, delta=12 means 12 hours)
         X - state vector and Y is intermediate vector.
         L - a dynamical calculator.
         Q - error-martrix.
@@ -709,9 +709,10 @@ def ens_fcst(L, Q, delta, X, freq='m'):
 
     # --------------------------------------------------------------------
     # RETURN statement 
-    return X
+    alpha = int(2 / delt)
+    return X[:, 0::alpha]
 
-def long_run(L, Q, delta, N):
+def long_run(L, Q, delta, X, freq='m'):
     '''
     Linear Inverse Modeling long-time run.(Henderson et al. 2020 JC  Penland and Matrosova 1994 JC)
     Free run.
@@ -732,25 +733,51 @@ def long_run(L, Q, delta, N):
     # EVD for Q.
     g, q = LA.eig(Q)
 
-    delta = delta / 24.  # time unit
-    n = int(2 * N / delta)  # integrated times
+    # which delta.
+    if freq == 'd':
+        delt = delta/24
+        n = 2 * 24//delta
+    elif freq == 'm':
+        delt = delta/720
+        n = 2 * 720//delta
+    else:
+        delt = delta/8640
+        n = 2 * 8640//delta
 
     X = numpy.zeros((L.shape[0], n))
     Y = X[:,0]
     for t in range(n):
         term1 = numpy.zeros(Y.shape[0])
         for j in range(L.shape[1]):
-            term1 += L[:, j] * Y[j] * delta
+            term1 += L[:, j] * Y[j] * delt
 
         term2 = numpy.zeros(Y.shape[0])
         R = random.normal(0, 1, Y.shape[0])
         for i in range(q.shape[1]):
-            term2 += q[:, i] * numpy.sqrt(g[i] * delta) * R[i]
+            term2 += q[:, i] * numpy.sqrt(g[i] * delt) * R[i]
 
-        X[:, t] = (Y + Y + term1 + term2) * 0.5
-        Y = X[:,t]
+        Y = X + term1 + term2
+        # final value for half-step forward.
+        X = (X + Y) * 0.5
 
     # --------------------------------------------------------------------
     # RETURN statement
-    alpha = int(2 / delta)
+    alpha = int(2 / delt)
     return X[:, 0::alpha]
+
+def dynamical_filter(X,v,u):
+    '''
+      Description: a method likes POP
+      by using eginvectors of L, x can be decomposed as x = sigma(u*alpha)
+      ref:
+        Penland, C., and L. Matrosova, 2006: Studies of El Niño and Interdecadal Variability in Tropical Sea Surface Temperatures Using a Nonnormal Filter. 
+                Journal of Climate, 19, 5796–5815, https://doi.org/10.1175/JCLI3951.1.
+      Clac: alpha = v.T @ x
+      Input:
+        X: LIM state [space,time]
+        v: selected eignvectors of adjoint L. [space, number]
+      Output:
+        RC: reconstructed state vectors. [space,time]
+
+    '''
+    return u @ (v.T @ X)
