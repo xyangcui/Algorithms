@@ -25,4 +25,6 @@ forecast: use your LIM to forecast, a deterministic forecast.
 
 long_run: use LIM to run a climatogical experiment. Aims at climatology research. Also, this can be called noise integration, a problistic forecast or ensemble forecast.
 
+dynamical_filter: like POP, filter data by dynamics (may different timescale).
+
 ![这是图片](LIM_flowchart.png)
