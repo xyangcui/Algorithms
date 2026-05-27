@@ -776,6 +776,7 @@ def dynamical_filter(X,v,u):
       Input:
         X: LIM state [space,time]
         v: selected eignvectors of adjoint L. [space, number]
+        u: eigenvectors of L. [space, number]
       Output:
         RC: reconstructed state vectors. [space,time]
 
