@@ -597,16 +597,19 @@ def Error_test(datat,tau0,unit_days,split_num):
     plt.show()
 
 
-def optimal_state(g,u,v,N,tau,tau0):
+def optimal_state(g,u,v,tau,tau0,r=None,c=0):
     '''
     calculate optimal state and growth rate.(Breeden et al. 2020 MWR)
     Inputs
         g: eigenvalues of G.
         u: eigenvector of L or G.
         v: adjoint eivector of L or G.
-        N: norm. the expected growth direction.
+        N: vector. the expected growth direction (the final state)
+           be normalized again.
+           for example, we focus on PNA, so variables don't represent PNA should be set to zero.
         tau: tau.
         tau0: tau used to train this LIM.
+        c: for Norm. default is zero.
 
     Outputs
         p: optimal state.
@@ -614,11 +617,16 @@ def optimal_state(g,u,v,N,tau,tau0):
     '''
     import numpy
     from numpy import linalg as LA
-
+    # whether use norm.
+    if r is None:
+        N = np.eye(len(u[:,0]))
+    else:
+        N = np.dot(LA.norm(r),LA.norm(r.T)) + c*np.eye(len(r))
+        
     g_diag = numpy.zeros((numpy.shape(N)[0], numpy.shape(N)[0]), complex)
     numpy.fill_diagonal(g_diag, g)
     G_tau = numpy.dot(u,numpy.dot((g_diag)**(tau/tau0),numpy.transpose(v)))
-    # Define the modes (u) and eigen-values (g) of G
+    # Define the modes (u) and eigen-values (g) of G with Norm.
     g, u = LA.eig(G_tau.T@N@G_tau)
     iSort = g.argsort()[::-1]    #Sort the eigen values and vectors in order 
     g     = g[iSort]
@@ -627,7 +635,7 @@ def optimal_state(g,u,v,N,tau,tau0):
     # --------------------------------------------------------------------
     # RETURN statement
     p = u[:,0] #optimal state.
-    g_rate = g[0]  #grwowth rate.
+    g_rate = np.log(g[0])  #grwowth rate.
     return {'p':p, 'g_rate':g_rate}
 
 
