@@ -27,8 +27,8 @@ Outputs      : b_alpha - values of Beta (not in a diagonal matrix as used in the
                normU   - the modes   of G, normalized 
                v       - the adjoints of G 
                g       - the eigenvalues of G 
-               periods - the periods of oscillations in LIM 
-               decayT  - the decay times of the periods above 
+               frequency - the periods of oscillations in LIM 
+               decayT  - the decay times of the periods above e-folding time 
                * NOTE: These can be easily reduced (or expanded) by altering the return statement at the bottom of the script) 
 ''' 
     import numpy as np 
