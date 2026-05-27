@@ -779,6 +779,36 @@ def dynamical_filter(X,v,u):
         u: eigenvectors of L. [space, number]
       Output:
         RC: reconstructed state vectors. [space,time]
-
     '''
     return u @ (v.T @ X)
+
+def get_variance(x,u,v):
+    '''
+      Description: get variance of each eignvector.
+      Input:
+        x: LIM state [space,time]
+        v: selected eignvectors of adjoint L. [space, number]
+        u: eigenvectors of L. [space, number]
+      Output:
+        varMode: variance of each eignvector. [number]
+    '''   
+    # Compute z while allowing for NaNs...
+    z = np.zeros([len(u[0,:]),len(x[0,:])],complex)  #[number,time]
+
+    # Get variance in each mode
+    varMode = np.zeros([len(u[0,:])])
+
+    v_tr = np.transpose(v)  #Get transpose of v [number,space]
+
+    for iMd in range(len(u[0,:])):                #Loop over modes 
+        for iT in range(len(x[0,:])):       #Loop over length of time in record 
+            for iSt in range(len(x[:,0])):        #Loop over station 
+                z[iMd,iT] += np.nansum(v_tr[iMd,iSt] * data[iSt,iT])  #Compute z, the timeseries of the mode 
+            #Get the variance of the mode 
+            varMode[iMd] += np.nansum([(z[iMd,iT].real**2), (z[iMd,iT].imag**2)])
+        
+        varMode[iMd] = varMode[iMd]/len(data[0,:])
+        
+    return varMode
+
+
