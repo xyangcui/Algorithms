@@ -206,7 +206,7 @@ def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale
       Pa: analyze error variance vector
       rescale: an emperical parameter to rescale for more precise ensemble spread.
     Output
-      singular vectors[nmember,m]: a ensemble of forecast members
+      ensemble[nmember,m]: a ensemble of forecast members
     '''
     import numpy as np
     from scipy.sparse import csr_matrix
