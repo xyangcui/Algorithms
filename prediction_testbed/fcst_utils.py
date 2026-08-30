@@ -114,7 +114,7 @@ def re_orthogonalize(w,Q_sub,k):
     return w
 
 def propagator(x, P, C0, C0T, CF, CF_trans, TLM, ADM):
-
+    '''use TLM and ADM calculate L.T@L@dx'''
     # 1. forward integration
     x1 = TLM(C0.dot(x))
     # 2. normalize x1
@@ -128,62 +128,101 @@ def propagator(x, P, C0, C0T, CF, CF_trans, TLM, ADM):
 
     return v
 
-def singular_vectors(m,nmember,scale,tol,C0,P,CF,CF_trans,TLM,ADM):
+def lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv):
     '''
-    use lanczos method to get n singular vectors.
+    lanczos iteration to get singular vectors and singular value.
     Input
-      m: length of space.
-      nmember: the number of forecast member
-      scale: determine the size of Krylov subspace
-      tol: determine whether to cut iteration
-      C0[m,m]: norm matrix to determine initial state; analyze error.
-      P[m,m]: project matrix (where to use)
-      CF: function to get norm matrix (determine evolving direction) perhaps energy form.
-      TLM: function to integrate TLM. (only needs input as self-variable)
-      ADM: function to integrate ADM, (like TLM)
+      m: space.
+      n: n*nsv.
+      P: projection matrix.
+      C0: initial matrix
+      C0T: T C0
+      TLM: tangent linear model
+      ADM: adjoint model
+      tol: tolerance
+      nsv: the number of singular vectors
     Output
-      singular vectors[nmember,m]: a ensemble of forecast members
+      Q: a set of projection vectors
+      T: a matrix in Krylov subspace
     '''
-    import numpy as np
-    from scipy.sparse import csr_matrix
-    n  = int(nmember * scale)
-    C0 = csr_matrix(C0); C0T = C0.T
-    # 1. generate a random vector  
+    # 1. initialize
     raw = np.random.randn(m)
     q = (raw - raw.mean())/raw.std()
-    # 2. lanczos iteration (project to Krylov subspace)
     Q = np.zeros([m,n]); Q[:,0] = q
     T = np.zeros([n,n])
     w = q.copy()
     q_new = q; q_old = np.zeros(m)
     beta  = 0.
+    # 2. iteration
     for i in range(n):
-        # 1. calculate matrix-vector dot
+        # calculate matrix-vector dot
         w = propagator(w,P,C0,C0T,CF,CF_trans,TLM,ADM)
-        # 2. Lanczos normalization
+        # Lanczos normalization
         alpha = np.dot(w,q_new)
         w = w - alpha*q_new - beta*q_old
         w = re_orthogonalize(w,Q[:,:i],i)
         beta = np.linalg.norm(w)
-        if beta < tol & i > nmember:
+        if beta < tol & i > nsv:
             T = T[:i,:i]
             Q = Q[:,:i]
             break
         else:
             q_old = q_new
             q_new = w/beta
-        # 3. store alpha, beta to T
+        # store alpha, beta to T
         T[i,i] = alpha
         if i < n-1:
             T[i,i+1] = beta; T[i+1,i] = beta
-        # 4. store q to Q
+        # store q to Q
         Q[:,i+1] = q_new
-    # 3. SVD the small matrix T
-    eigenvalues, eigenvectors = np.linalg.eig(T)  
-    # 4. get Ritz vectors
-    delta_X = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors,out=Q)
 
-    return delta_X[:,nmember]
+    return Q, T
+
+def gaussian_sampling(SV, Pa, gamma, nmember, nsv):
+    '''sampling parameters to linearly combine SVs'''
+    from scipy.stats import truncnorm
+    # 1. standardize
+    SV_std = SV / Pa
+    # 2. norm
+    sv_norm = np.linalg.norm(SV_std,axis=0,keepdims=False)
+    beta = gamma / sv_norm.mean()
+    # 3. sampling [n,nsv]
+    return truncnorm(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
+
+def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale):
+    '''
+    use lanczos method to get nsv singular vectors and get a ensemble.
+    Input
+      m: length of space.
+      nsv: the number of singular vectors
+      scale: determine the size of Krylov subspace
+      tol: determine whether to cut iteration
+      C0[m,m]: norm matrix to determine initial state; analyze error.
+      P[m,m]: project matrix (where to use)
+      CF: function to get norm matrix (determine evolving direction) perhaps total energy metrics.
+      TLM: function to integrate TLM. (only needs input as self-variable)
+      ADM: function to integrate ADM, (like TLM)
+      nmember: the number of member
+      Pa: analyze error variance vector
+      rescale: an emperical parameter to rescale for more precise ensemble spread.
+    Output
+      singular vectors[nmember,m]: a ensemble of forecast members
+    '''
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    n  = int(nsv * scale)
+    C0 = csr_matrix(C0); C0T = C0.T
+    # 1. lanczos iteration (project to Krylov subspace)
+    Q, T = lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv)
+    # 2. SVD the small matrix T
+    eigenvalues, eigenvectors = np.linalg.eig(T)  
+    # 3. get Ritz vectors
+    SV = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors,out=Q)[:,:nsv]
+    # 4. generate members
+    ## use analyze error covariance to decide parameters
+    Alpha = gaussian_sampling(SV,Pa,rescale,nmember,nsv)
+
+    return Alpha@SV.T
 
 
 # type-3: Nonlinear Lyapunov Vectors (NLLVs)
