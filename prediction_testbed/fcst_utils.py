@@ -6,7 +6,7 @@ import numpy as np
 # Gram-Schmidt orthogonalization
 def GSR_process(x):
     from numpy.linalg import qr
-    # pass a 2D martrix[m,n] n vectors with m dimensions
+    # pass a 2D martrix[n,m] n vectors with m dimensions
     x = x.T
     m = len(x[:,0]); n = len(x[0,:])
     for i in range(1,n):

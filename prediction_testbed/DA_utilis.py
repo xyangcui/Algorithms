@@ -239,9 +239,64 @@ class FourDVar:
 
 ## Ensemble Kalman Filter  (assumption: model is equivalent to linear model; flow-dependent) ##
 # localization
+#G-C function
+def comp_cov_factor(z_in,c):
+    '''
+    Input
+      z_in: distance between two points.
+      c: cutoff radius.
+    Output
+      cov_factor: a localization coefficient 
+    '''
+    z = abs(z_in)
+    if z <= c:
+        r = z/c
+        cov_factor = -0.25*r**5+0.5*r**4+0.625*r**3-5.0/3.0*r**2 + 1
+    elif z <= 2*c:
+        r = z/c
+        cov_factor = 1.0/12.0*r**5-0.5*r**4+0.625*r**3-5.0/3.0*r**2\
+            -5.0*r+4-2.0/(3.0*r)
+    else:
+        cov_factor = 0
+
+    return cov_factor
+
+def Rho_theretical(localP, size):
+    '''
+    An easy version to generate a localized matrix.
+    It may include real distance in the future.
+    Input
+      localP: cutoff radius
+      size: length of a vector
+    Output
+      a matrix.
+    '''
+    from scipy.linalg import toeplitz
+    rho0 = np.zeros(size)
+    for i in range(size):
+        rho0[i] = comp_cov_factor(i,localP)
+
+    return toeplitz(rho0,rho0)
+def Rho(localP, dist):
+    '''
+    An easy version to generate a localized matrix.
+    It may include real distance in the future.
+    Input
+      localP: cutoff radius
+      dist[ndim,nobs]: distance between point and obs.
+    Output
+      a matrix.
+    '''
+    rho = np.zeros_like(dist)
+    ndim, nobs = dist.shape
+    for i in range(ndim):
+        for j in range(nobs)
+        rho[i,j] = comp_cov_factor(dist[i,j],localP)
+
+    return rho
 # inflation
 # EnKF
-def enkf_update_array(xb,y,ObsOp,R):
+def enkf_update_array(xb,y,ObsOp,R,gamma=1.,loc=None):
     '''
     Ensemble Kalman Filter
     Input 
@@ -249,7 +304,8 @@ def enkf_update_array(xb,y,ObsOp,R):
        y: measurement (nobs)
       ObsOp: projection model.
        R: covariance of measurement (nobs,nobs)
-
+    gamma: parameter of inflation. default is 1, no inflation.
+     loc: localization matrix. Default is no localization. (ndim, nobs)
     Output
       xa: posterior estimate (ndim,nens)
 
@@ -258,37 +314,41 @@ def enkf_update_array(xb,y,ObsOp,R):
         Data Assimilation Fundamentals: A Unified Formulation of the State and Parameter Estimation Problem. 
         Springer International Publishing, https://doi.org/10.1007/978-3-030-96709-3.
     '''
+    from math import sqrt
     # step1: dim information
     ndim, nens = xb.shape; nobs = len(y)
     # step2: get centralized matrix
     IN = np.eye(nens); I = np.ones(nens)
     PI = (IN - np.outer(I,I)/nens)/np.sqrt(nens-1)
     # step3: disturb measurement
-    E  = np.random.multivariate_normal(np.zeros(nobs,nens), R)
-    D  = y@I.T + np.sqrt(nens-1)*E
+    E  = np.random.multivariate_normal(np.zeros(nens), R, size=nobs).T #[nobs, nens]
+    D  = y[:,None]@I[None,:] + np.sqrt(nens-1)*E
     # step4: project prior to measurement
     y_model  = ObsOp(xb); Y = y_model@PI
-    if ndim<nens-1:
-        A  = xb@PI #prior's anomaly
-        Y = Y@inv(A)@A
     # step5 : update
-    W  = Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
-    xb = xb @ (I + W/np.sqrt(nens-1))  
+    if loc == None:
+        W  = loc@Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
+    else:
+        W  = loc@Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
+    ## inflation
+    xm = xb.mean(aixs=1)
+    xbp = xb - xm; xbp *= sqrt(gamma)
+    xb = (xm[:,None]+xbp) @ (I + W/np.sqrt(nens-1))  
 
     return xb
 
 # square-root Filters
 #LETKF
-def letkf_update_array(E,R_inv,y,H,gamma=1.0):
+def letkf_update_array(E,R,y,H,loc,gamma=1.0):
     '''
     Local Ensemble Transform Kalman Filter
     Input
       E: prior estimation (ndims, nens)
-      R_inv: inversed covariance matrix of measurements (dim_measure,dim_measure)
+      R: covariance matrix of measurements (dim_measure,dim_measure) independent
       y: measurement (dim_measurement)
       H: corelation between model and measurement, linear case (dim_measure,ndims)
       gamma: parameter for inflation. default is 1.0, no inflation
-
+     loc: localization matrix. Default is no localization. (ndim, nobs)
     Output
       E: posterior estimation (ndims, nens)
 
@@ -296,29 +356,43 @@ def letkf_update_array(E,R_inv,y,H,gamma=1.0):
       Efficient data assimilation for spatiotemporal chaos: A local ensemble transform Kalman filter. 
       Physica D: Nonlinear Phenomena, 230, 112–126, https://doi.org/10.1016/j.physd.2006.11.008.
     '''
+    from scipy.linalg import solve
     D, nens = E.shape[0], E.shape[1]
     # seperate prior into mean and anomaly
     xbb = np.nanmean(E,1).reshape(D,1)
     xbp = E - xbb #/ np.sqrt(nens - 1)
-    # inflation
-    xbp *= np.sqrt(gamma)
     # model to measurement
-    ym = H(xbb); yp = H(E) - ym
+    ym = H(xbb); yp = H(xbp)
     # update
-    Pa = np.linalg.inv((nens-1)*np.eye(nens)+yp.T@R_inv@yp)
-    is_sysm = np.allclose(Pa, Pa.T)
-    if is_sysm == False:
-        Pa = (Pa+Pa.T)/2
-    w  = Pa@yp.T@R_inv@(y.reshape(D,1)-ym)
-    W  = sqrtm((nens-1)*Pa) # np.linalg.cholesky((nens-1)*Pa).T
-    if np.iscomplexobj(W):
-        W = np.real(W)
-    E = xbb+xbp@(w+W)
+    for i in range(D):
+        #solve RC = yb get R-1yp transpose: yp.T@R-1
+        C = solve(R, yp, assume_a='pos'); CT = C.T
+        A_mat = (nens-1)/gamma* np.eye(nens) + loc[i,:] @ CT @ yp
+        # use PCA get Pa.
+        eigvals, eigvecs = np.linalg.eigh(A_mat)
+        tol = 1e-8 * np.max(eigvals)
+        eigvals = np.where(eigvals < tol, tol, eigvals)
+        Pa = eigvecs @ np.diag(1.0 / eigvals) @ eigvecs.T
+        if not np.allclose(Pa, Pa.T):
+            Pa = (Pa + Pa.T) / 2
+            eigvals_p, eigvecs_p = np.linalg.eigh((nens-1)*Pa)
+        else:
+            eigvals_p = (nens-1) * 1.0 / eigvals
+            eigvecs_p = eigvecs
+
+        eigvals_p = np.maximum(eigvals_p, 0.0) 
+        # calculate W and w.
+        W = eigvecs_p @ np.diag(np.sqrt(eigvals_p)) @ eigvecs_p.T
+        w = Pa @ CT @ (y.reshape(-1, 1) - ym)
+        if np.iscomplexobj(W):
+            W = np.real(W)
+        # update locally
+        E[i, :] = xbb[i, 0] + xbp[i, :] @ (w + W)
 
     return E
 
 # ETKF
-def etkf_update_array(E,R,R_inv,y,H,gamma=1.0):
+def etkf_update_array_theory(E,R,R_inv,y,H,gamma=1.0):
     '''
       Ensemble Transform Kalman Filter
       Input
@@ -336,6 +410,7 @@ def etkf_update_array(E,R,R_inv,y,H,gamma=1.0):
         Bishop, C. H., B. Etherton, and S. J. Majumdar, 2001: Adaptive sampling with the ensemble transform Kalman filter. Part I: Theoretical aspects. 
         Mon. Wea. Rev., 129, 420–436. https://doi.org/10.1175/1520-0493(2001)129<0420:ASWTET>2.0.CO;2
     '''
+    from math import sqrt
     D, nens = E.shape
     # step1: get mean and anomaly.
     x_mean = np.mean(E,axis=1)
@@ -363,13 +438,63 @@ def etkf_update_array(E,R,R_inv,y,H,gamma=1.0):
     # get analysis square root
     T = eigvectors @ np.diag(1.0 / np.sqrt(1. + eigvalues))
     # innovate perturbation.
-    E = xam[:,np.newaxis] + (1+gamma) * (x_anom @ T)
+    E = xam[:,np.newaxis] + sqrt(gamma) * (x_anom @ T)
 
     return E
+
+#ETKF
+def etkf_update_array(E,R,y,H,gamma=1.0):
+    '''
+    Ensemble Transform Kalman Filter
+    Input
+      E: prior estimation (ndims, nens)
+      R: covariance matrix of measurements (dim_measure,dim_measure)
+      y: measurement (dim_measurement)
+      H: corelation between model and measurement, linear case (dim_measure,ndims)
+      gamma: parameter for inflation. default is 1.0, no inflation
+    Output
+      E: posterior estimation (ndims, nens)
+
+    Referfence: Hunt, B. R., E. J. Kostelich, and I. Szunyogh, 2007: 
+      Efficient data assimilation for spatiotemporal chaos: A local ensemble transform Kalman filter. 
+      Physica D: Nonlinear Phenomena, 230, 112–126, https://doi.org/10.1016/j.physd.2006.11.008.
+    '''
+    from scipy.linalg import solve
+    D, nens = E.shape[0], E.shape[1]
+    # seperate prior into mean and anomaly
+    xbb = np.nanmean(E,1).reshape(D,1)
+    xbp = E - xbb #/ np.sqrt(nens - 1)
+    # model to measurement
+    ym = H(xbb); yp = H(xbp)
+    #solve RC = yb get R-1yp transpose: yp.T@R-1
+    C = solve(R, yp, assume_a='pos'); CT = C.T
+    A_mat = (nens-1)/gamma* np.eye(nens) + CT @ yp
+    # use PCA get Pa.
+    eigvals, eigvecs = np.linalg.eigh(A_mat)
+    tol = 1e-8 * np.max(eigvals)
+    eigvals = np.where(eigvals < tol, tol, eigvals)
+    Pa = eigvecs @ np.diag(1.0 / eigvals) @ eigvecs.T
+    if not np.allclose(Pa, Pa.T):
+        Pa = (Pa + Pa.T) / 2
+        eigvals_p, eigvecs_p = np.linalg.eigh((nens-1)*Pa)
+    else:
+        eigvals_p = (nens-1) * 1.0 / eigvals
+        eigvecs_p = eigvecs
+
+    eigvals_p = np.maximum(eigvals_p, 0.0) 
+    # calculate W and w.
+    W = eigvecs_p @ np.diag(np.sqrt(eigvals_p)) @ eigvecs_p.T
+    w = Pa @ CT @ (y.reshape(-1, 1) - ym)
+    if np.iscomplexobj(W):
+        W = np.real(W)
+    # udate
+    E = xbb+xbp@(w+W)
+    return E
+
 # EAKF
 
 # serial SRF
-def serial_update_array(E,R,obs,h,gamma=1.0):
+def serial_update_array(E,R,obs,h,gamma=1.0,loc=None):
     '''
       Ensemble serial root-squre filter.
 
@@ -379,7 +504,7 @@ def serial_update_array(E,R,obs,h,gamma=1.0):
         obs: measurement (dim_measurement)
         h: projection operator (dim_measure,nens)
         gamma: parameter for inflation. default is 1.0, no inflation
-
+        loc: localization
       Output
         E; posterior estimation (ndims, nens)
       
@@ -387,6 +512,7 @@ def serial_update_array(E,R,obs,h,gamma=1.0):
         Whitaker, J., and T. M. Hamill, 2002: Ensemble data assimilation without perturbed observations. 
         Mon. Wea. Rev., 130, 19131924. https://doi.org/10.1175/1520-0493(2002)130<1913:EDAWPO>2.0.CO;2
     '''
+    from math import sqrt
     # dim numbers and projection
     nens = E.shape[0]; nmea = len(obs); Y = h(E)
     for i in range(nmea):
@@ -408,9 +534,12 @@ def serial_update_array(E,R,obs,h,gamma=1.0):
         # innovation
         xam = xm + np.multiply(K,y_obs-ym)
         # convert to martrix
-        Kmat = np.multiply(beta,K)
-        xa   = xf - np.dot(Kmat[:,np.newaxis],yf[np.newaxis,:])
-        E = xam[:,np.newaxis] + (1+gamma)*xa
+        if loc == None:
+            Kmat = np.multiply(beta,K)
+        else:
+            Kmat = loc[:,i]@np.multiply(beta,K)
+        xa = xf - np.dot(Kmat[:,np.newaxis],yf[np.newaxis,:])
+        E = xam[:,np.newaxis] + sqrt(gamma)*xa
 
     return E
 
