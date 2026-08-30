@@ -493,6 +493,29 @@ It can be de-aliased.
 
         return rhs
 
+    def bve_tlm_propagator(self,models,zt,dzt,forcet):
+        '''
+        One step of integrating TLM with RK4.
+        Input
+          models: a class of model.
+          zt: nonlinear state.
+          dzt: linear state
+        Output
+          zt: nonliear state
+          dzt: linear state.
+        '''
+
+        # RK4 NLM + TLM
+        zt, dzt = rk4_nl_tlm(models,zt,dzt,self.dt,forcet)
+        # same post-processing for BOTH
+        zt = self.hyperviscosity(zt, dt)
+        dzt = self.hyperviscosity(dzt, dt)
+
+        self.anti_alias(zt)
+        self.anti_alias(dzt)
+
+        return zt, dzt
+
     def bve_adm(self,rhs_ad,zt):
         """
     Adjoint model of Barotropic vorticity equation tendency operator.
@@ -549,6 +572,27 @@ It can be de-aliased.
         lam_old += -self.rksq * psidt_ad
 
         return lam_old
+
+    def bve_adm_propagator(self,models,nstep,z_base,lam,forcet):
+        '''
+        One step integration of ADM.
+        Input
+          models: a class of model.
+          nstep: current steps of integration.
+          z_base[nstep,ndims]: till now nonlinear states.
+          lam: current linear state.
+          forcet: forcing
+        Output
+          lam: adjoint variable
+        '''
+        for n in range(nstep - 1, -1, -1):
+            zt = ft(z_base[n])
+
+            models.anti_alias(lam)
+            lam = models.hyperviscosity(lam,self.dt)
+            lam = rk4_nl_adm(models,zt,lam,self.dt,forcet)
+
+        return lam
 
 if __name__ == "__main__":
 

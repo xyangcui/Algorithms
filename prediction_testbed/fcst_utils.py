@@ -1,7 +1,24 @@
 import numpy as np
 
+#------------------------------------------------------------------------------
+# global function
+#------------------------------------------------------------------------------
+# Gram-Schmidt orthogonalization
+def GSR_process(x):
+    from numpy.linalg import qr
+    # pass a 2D martrix[m,n] n vectors with m dimensions
+    x = x.T
+    m = len(x[:,0]); n = len(x[0,:])
+    for i in range(1,n):
+        col1 = x[:,i]
+        col2 = x[:,:i]
+        for j in range(i):
+            x[:,i] -= np.dot(col1,col2[:,j])/np.dot(col1,col1) * col1
+
+    return x.T
+
 # forecast initialization
-# type-1 breeding vectors
+# breeding vectors
 def breeding_vectors(x2,B,N,M_update,rescaled_dt=0.2,breeding_length=2):
     '''
       breeding vectors.
@@ -21,8 +38,6 @@ def breeding_vectors(x2,B,N,M_update,rescaled_dt=0.2,breeding_length=2):
     initial_delta = x1 - x2
     initial_rms = np.linalg.norm(initial_delta,axis=1)
     #step2: breeding
-    rescaled_dt = 0.2
-    breeding_length = 2
     breeding_step = int(breeding_length/rescaled_dt)
 
     for k in range(breeding_step):
@@ -44,8 +59,8 @@ def breeding_vectors(x2,B,N,M_update,rescaled_dt=0.2,breeding_length=2):
 
     return delta
 
-# type 2: singular vectors
-def singular_vectors(x2,N,M_update,M_TLM,sv_dt,sv_length,scale_factor=5.):
+# singular vectors (theoretical, needs jacobi of TLM, not practical).
+def singular_vectors_theoretical(x2,N,M_update,M_TLM,sv_dt,sv_length,scale_factor=5.):
     '''
       singular vectors.
       Input
@@ -85,21 +100,93 @@ def singular_vectors(x2,N,M_update,M_TLM,sv_dt,sv_length,scale_factor=5.):
     return x1.T
 
 
+def re_orthogonalize(w,Q_sub,k):
+    '''re-orthognalize vector w.'''
+    # if the first step, return itself.
+    if k != 0:
+        # first orthogonalize
+        alpha_base = Q_sub.T@w
+        w = w - Q_sub@alpha_base
+        # second orthogonalize
+        alpha_base = Q_sub.T@w
+        w = w - Q_sub@alpha_base
+
+    return w
+
+def propagator(x, P, C0, C0T, CF, CF_trans, TLM, ADM):
+
+    # 1. forward integration
+    x1 = TLM(C0.dot(x))
+    # 2. normalize x1
+    xt1 = CF(P@x1)
+    xt2 = CF_trans(xt1)
+    xt  = P.T@xt2
+    # 3. backward integration
+    x2 = ADM(xt)
+    # 4. normalize x2
+    v  = C0T.dot(x2)
+
+    return v
+
+def singular_vectors(m,nmember,scale,tol,C0,P,CF,CF_trans,TLM,ADM):
+    '''
+    use lanczos method to get n singular vectors.
+    Input
+      m: length of space.
+      nmember: the number of forecast member
+      scale: determine the size of Krylov subspace
+      tol: determine whether to cut iteration
+      C0[m,m]: norm matrix to determine initial state; analyze error.
+      P[m,m]: project matrix (where to use)
+      CF: function to get norm matrix (determine evolving direction) perhaps energy form.
+      TLM: function to integrate TLM. (only needs input as self-variable)
+      ADM: function to integrate ADM, (like TLM)
+    Output
+      singular vectors[nmember,m]: a ensemble of forecast members
+    '''
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    n  = int(nmember * scale)
+    C0 = csr_matrix(C0); C0T = C0.T
+    # 1. generate a random vector  
+    raw = np.random.randn(m)
+    q = (raw - raw.mean())/raw.std()
+    # 2. lanczos iteration (project to Krylov subspace)
+    Q = np.zeros([m,n]); Q[:,0] = q
+    T = np.zeros([n,n])
+    w = q.copy()
+    q_new = q; q_old = np.zeros(m)
+    beta  = 0.
+    for i in range(n):
+        # 1. calculate matrix-vector dot
+        w = propagator(w,P,C0,C0T,CF,CF_trans,TLM,ADM)
+        # 2. Lanczos normalization
+        alpha = np.dot(w,q_new)
+        w = w - alpha*q_new - beta*q_old
+        w = re_orthogonalize(w,Q[:,:i],i)
+        beta = np.linalg.norm(w)
+        if beta < tol & i > nmember:
+            T = T[:i,:i]
+            Q = Q[:,:i]
+            break
+        else:
+            q_old = q_new
+            q_new = w/beta
+        # 3. store alpha, beta to T
+        T[i,i] = alpha
+        if i < n-1:
+            T[i,i+1] = beta; T[i+1,i] = beta
+        # 4. store q to Q
+        Q[:,i+1] = q_new
+    # 3. SVD the small matrix T
+    eigenvalues, eigenvectors = np.linalg.eig(T)  
+    # 4. get Ritz vectors
+    delta_X = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors,out=Q)
+
+    return delta_X[:,nmember]
+
+
 # type-3: Nonlinear Lyapunov Vectors (NLLVs)
-# Gram-Schmidt orthogonalization
-def GSR_process(x):
-    from numpy.linalg import qr
-    # pass a 2D martrix[m,n] n vectors with m dimensions
-    x = x.T
-    m = len(x[:,0]); n = len(x[0,:])
-    for i in range(1,n):
-        col1 = x[:,i]
-        col2 = x[:,:i]
-        for j in range(i):
-            x[:,i] -= np.dot(col1,col2[:,j])/np.dot(col1,col1) * col1
-
-    return x.T
-
 def NLL_vectors(x2,B,N1,N2,M_update,rescaled_dt=0.2,breeding_length=2):
     '''
       NLLVs.
@@ -161,3 +248,43 @@ def NLL_vectors(x2,B,N1,N2,M_update,rescaled_dt=0.2,breeding_length=2):
         rms_breeding[k+1,:] = delta_rms    
 
     return delta[:N2,:]
+
+## second-order exact sampling (SOES)
+def construct_constrained_matrix(n):
+    '''Householder transformations'''
+    from math import sqrt
+    from scipy.stats import ortho_group
+    # define a vector
+    u = np.full(n,1/sqrt(n))
+    # project a base vector to direction u.
+    v = np.zeros(n); v[0] = 1
+    v = v - u
+    # get householder matrix
+    H = np.eye(n) - 2*(v@v.T)/(v.T@v)
+    # random rotation
+    R = ortho_group.rvs(dim=n-1)
+    # rotate the matrix H
+    return H[:,:n-1]@R
+
+def SOES_vectors(base, nmember):
+    '''
+    Its perturbations precisely keep the first two moments: mean and variance.
+    Input
+      base[ndim, nsample]: historical records of forecast.
+      nmember: the number of forecast member.
+    Ouput
+      Omega[nmember, ndim]: a ensemble of n members.
+    '''
+    from numpy.linalg import svd
+    from math import sqrt
+    # 1. calculate anomaly
+    base_anomaly = base - base.mean(aixs=1)
+    # 2. SVD anomalous field to get direction and singular values.
+    U, Sigma, _ = svd(base_anomaly)
+    # 3. key: construct a constrained random orthogonal matrix. (fullfill the two-order condition)
+    Omega = construct_constrained_matrix(nmember) # [nmember, nmember-1]
+    # 4. cut off U and Sigma to nmember and restore with Omega.
+    Uc = U[:,:nmember-1]; Sigmac = Sigma[:nmember-1,:nmember-1]
+    Omega = Uc@Sigmac@Omega.T
+
+    return sqrt(nmember-1)*Omega
