@@ -1,5 +1,5 @@
 import numpy as np
-
+from toy_models import RK4, L96
 #------------------------------------------------------------------------------
 # global function
 #------------------------------------------------------------------------------
@@ -255,10 +255,9 @@ def NLL_vectors(x2,B,N1,N2,M_update,rescaled_dt=0.2,breeding_length=2):
         for i in range(N1):
             x1[i,:] = M_update(x1[i,:],rescaled_dt)
         #true value.
-        x2 = RK4(L96,x2,rescaled_dt,F)
+        x2 = RK4(L96,x2,rescaled_dt)
         # x1 minus x2
         delta = x1 - x2[np.newaxis,:]
-
         ## related to NLLE
         # calc rms and store.
         delta_rms = np.linalg.norm(delta,axis=1)

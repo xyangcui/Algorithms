@@ -82,36 +82,52 @@ def adams_bashforth_tlm(dzt, zt, rhsz, rhsdz, dt):
 
     return newzt, newdzt
 
-zt_dt2, zt_dt3 = 0. ,0.
-def adams_bashforth_adm(adm,lam_new, lam, dt, n):
+lam_p1, lam_p2 = 0., 0.  
+def adams_bashforth_adm(adm, lam_new, zt, dt, n):
     """Take a single step forward in time using Adams-Bashforth 3."""
-    global lam_dt3, lam_dt2, zt_dt2, zt_dt3
-    if n == 0:
-        # forward euler
-        dt1 = dt
-        dt2 = 0.0
-        dt3 = 0.0
-    elif n == 1:
-        # AB2 at step 2
-        dt1 = 1.5*dt
-        dt2 = -0.5*dt
-        dt3 = 0.0
+    global lam_p1, lam_p2
+
+    N = zt.shape[0]
+
+    # backward n=0:
+    # current lambda = lambda_{N-1}
+    # calculate lambda_{N-2}
+    loc = N - 1 - n
+    k = loc - 1
+
+    # a_k
+    if k == 0:
+        a = dt
+    elif k == 1:
+        a = 1.5 * dt
     else:
-        # AB3 from step 3 on
-        dt1 = 23./12.*dt
-        dt2 = -16./12.*dt
-        dt3 = 5./12.*dt
+        a = 23.0 / 12.0 * dt
 
-    lam[n]  = lam_dt1.copy()
-    lam_new += dt1*adm(lam_dt1,zt_dt1)
-    if n >1:
-    lam_dt2 += dt2*adm(lam_dt2,zt_dt2)
-    zt_dt2 = zt_dt3
+    # b_{k+1}
+    if k + 1 >= N - 1:
+        b = 0.0
+    elif k + 1 == 1:
+        b = -0.5 * dt
+    else:
+        b = -16.0 / 12.0 * dt
 
-    lam_dt3 += dt3*adm(lam_dt3,zt_dt3)
-    zt_dt3 = zt_dt1
+    # c_{k+2}
+    if k + 2 >= N - 1:
+        c = 0.0
+    elif k + 2 < 2:
+        c = 0.0
+    else:
+        c = 5.0 / 12.0 * dt
 
-    return lam_new
+    q = a * lam_new + b * lam_p1 + c * lam_p2
+
+    lam_old = lam_new + adm(q, zt[k])
+    
+    # update lambda history
+    lam_p2 = lam_p1.copy() if hasattr(lam_p1, "copy") else lam_p1
+    lam_p1 = lam_new.copy()
+
+    return lam_old
 
 # Runge-Kuta integration
 def runge_kuta4(rhs,state,dt,*args):
@@ -914,16 +930,14 @@ if __name__ == "__main__":
         v = lam
         #lam = Mu.copy()
         z_adm[-1] = ift(lam)
-        for n in range(nstep - 1, -1, -1):
-            zt = ft(z_base[n])
-
+        zt = ft(z_base)
+        for n in range(nstep-1):
             model.anti_alias(lam)
             lam = model.hyperviscosity(lam,dt)
-            lam_rhs = model.bve_adm(lam,zt)
-            lam = adams_bashforth_adm(lam,lam_rhs,dt,n)
+            lam_rhs = lambda x,y: model.bve_adm(x,y)
+            lam = adams_bashforth_adm(lam_rhs,lam,zt,dt,n)
 
             z_adm[n] = ift(lam)
-
         # 4. parameter
         u = ft(dz0)
         Mstar_Mu = ft(z_adm[0])

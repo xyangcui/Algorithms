@@ -52,7 +52,7 @@ def adams_bashforth_tlm(dzt, zt, rhsz, rhsdz, dt):
 
     return newzt, newdzt
 
-  # previous two right hand sides
+  # previous two right hand sides wait for update.
 lam_dt3, lam_dt2 = 0., 0.
 def adams_bashforth_adm(lam_new, lam_dt1, dt, n):
     """Take a single step forward in time using Adams-Bashforth 3."""

@@ -25,6 +25,43 @@ def L63(state,*args):
 
     return f
 
+def L63_tlm(state,zt,*args):
+    sigma = args[0] 
+    rho   = args[1]
+    beta  = args[2]
+
+    dx,dy,dz = state
+    x, y, z = zt
+    f = np.zeros(3)
+    f[0] = sigma*(dy-dx)
+    f[1] = rho*dx-dy-x*dz-z*dx  #rho heating parameters
+    f[2] = dx*y + x*dy- beta*dz
+
+    return f
+
+def L63_adm(lam,zt,*args):
+    sigma = args[0] 
+    rho   = args[1]
+    beta  = args[2]
+
+    lamx,lamy,lamz = lam
+    x, y, z = zt
+
+    f = np.zeros(3)
+    # dz = y*dx + x*dy - beta*dz
+    f[2] += -beta*lamz
+    f[1] += x*lamz    
+    f[0] += y*lamz
+    # dy = (rho-z)*dx -dy -x*dz
+    f[2] += -x*lamy
+    f[1] += -lamy
+    f[0] += (rho-z)*lamy
+    # dx = simga*(dy - dx)
+    f[1] += sigma*lamx
+    f[0] += -sigma*lamx
+
+    return f
+
 # L63 TLM operator
 def L63_TLM_operator(state,dt,*args):
     #def L.

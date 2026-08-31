@@ -290,8 +290,8 @@ def Rho(localP, dist):
     rho = np.zeros_like(dist)
     ndim, nobs = dist.shape
     for i in range(ndim):
-        for j in range(nobs)
-        rho[i,j] = comp_cov_factor(dist[i,j],localP)
+        for j in range(nobs):
+            rho[i,j] = comp_cov_factor(dist[i,j],localP)
 
     return rho
 # inflation
@@ -367,7 +367,7 @@ def letkf_update_array(E,R,y,H,loc,gamma=1.0):
     for i in range(D):
         #solve RC = yb get R-1yp transpose: yp.T@R-1
         C = solve(R, yp, assume_a='pos'); CT = C.T
-        A_mat = (nens-1)/gamma* np.eye(nens) + loc[i,:] @ CT @ yp
+        A_mat = (nens-1)/gamma* np.eye(nens) + loc[i:i,:] @ CT @ yp
         # use PCA get Pa.
         eigvals, eigvecs = np.linalg.eigh(A_mat)
         tol = 1e-8 * np.max(eigvals)
