@@ -82,6 +82,37 @@ def adams_bashforth_tlm(dzt, zt, rhsz, rhsdz, dt):
 
     return newzt, newdzt
 
+zt_dt2, zt_dt3 = 0. ,0.
+def adams_bashforth_adm(adm,lam_new, lam, dt, n):
+    """Take a single step forward in time using Adams-Bashforth 3."""
+    global lam_dt3, lam_dt2, zt_dt2, zt_dt3
+    if n == 0:
+        # forward euler
+        dt1 = dt
+        dt2 = 0.0
+        dt3 = 0.0
+    elif n == 1:
+        # AB2 at step 2
+        dt1 = 1.5*dt
+        dt2 = -0.5*dt
+        dt3 = 0.0
+    else:
+        # AB3 from step 3 on
+        dt1 = 23./12.*dt
+        dt2 = -16./12.*dt
+        dt3 = 5./12.*dt
+
+    lam[n]  = lam_dt1.copy()
+    lam_new += dt1*adm(lam_dt1,zt_dt1)
+    if n >1:
+    lam_dt2 += dt2*adm(lam_dt2,zt_dt2)
+    zt_dt2 = zt_dt3
+
+    lam_dt3 += dt3*adm(lam_dt3,zt_dt3)
+    zt_dt3 = zt_dt1
+
+    return lam_new
+
 # Runge-Kuta integration
 def runge_kuta4(rhs,state,dt,*args):
     k1 = rhs(state,*args)
@@ -650,11 +681,11 @@ if __name__ == "__main__":
         c, _ = model.processing(zt)
         # 3. dynamics and integration
         # adms bashforth3
-        #rhs = model.bve_operator(zt,forcet)
-        #zt  = adams_bashforth(zt, rhs, dt)
+        rhs = model.bve_operator(zt,forcet)
+        zt  = adams_bashforth(zt, rhs, dt)
         # runge kuta4
-        rhs = lambda z: model.bve_operator(z, forcet)
-        zt  = runge_kuta4(rhs, zt, dt)
+        #rhs = lambda z: model.bve_operator(z, forcet)
+        #zt  = runge_kuta4(rhs, zt, dt)
         # 4. use hyperviscosity to reduce high wavenumber
         zt = model.hyperviscosity(zt,dt)
         # 5. anti_alias
@@ -830,8 +861,83 @@ if __name__ == "__main__":
         print("adjoint rk4 test")
         print("lhs =", lhs)
         print("rhs =", rhs)
-        print("relative error =", err)          
+        print("relative error =", err)   
 
-    test_tlm(model,vor[0],dt,tmax,forcet)
-    test_bve_adjoint(model, zt)
-    test_adjoint_rk4(model,vor[0],dt,tmax,forcet)
+    def test_adjoint_ab3(model, z0, dt, tmax, forcet,alpha=0.1, ntest=15, seed=1234):
+        '''Test <Mu, v> == <M*v, u>'''
+        rng = np.random.default_rng(seed)
+
+        nstep = int(round(tmax / dt))
+        # Initial perturbation
+        zt0 = ft(z0)
+        dz0 = rng.standard_normal(z0.shape)
+
+        dz0 -= dz0.mean()
+        dz0 /= np.linalg.norm(dz0)
+        dzt0 = ft(dz0)
+
+        zt = zt0.copy()
+        dzt = dzt0.copy()
+
+        z_base = np.empty((nstep + 1,) + z0.shape)
+        dz_tlm = np.empty_like(z_base)
+        z_adm  = np.empty_like(z_base)
+
+        z_base[0] = z0
+        dz_tlm[0] = dz0
+
+        # 1. Integrate TLM and real NLM
+        for n in range(nstep):
+            # RK4 NLM + TLM
+            rhsz = model.bve_operator(zt,forcet)
+            rhsdz= model.bve_tlm(dzt,zt)
+            zt, dzt = adams_bashforth_tlm(dzt,zt,rhsz,rhsdz,dt)
+            # same post-processing for BOTH
+            zt = model.hyperviscosity(zt, dt)
+            dzt = model.hyperviscosity(dzt, dt)
+
+            model.anti_alias(zt)
+            model.anti_alias(dzt)
+
+            z_base[n + 1] = ift(zt)
+            dz_tlm[n + 1] = ift(dzt)  
+        # 2. Integrate ADM
+        # TLM final perturbation
+        Mu = dzt.copy()
+        # terminal adjoint
+        # random terminal adjoint variable
+        rng = np.random.default_rng(5678)
+        lam_phys = rng.standard_normal(z0.shape)
+        lam_phys -= lam_phys.mean()
+        lam_phys /= np.linalg.norm(lam_phys)
+        lam = ft(lam_phys)
+        v = lam
+        #lam = Mu.copy()
+        z_adm[-1] = ift(lam)
+        for n in range(nstep - 1, -1, -1):
+            zt = ft(z_base[n])
+
+            model.anti_alias(lam)
+            lam = model.hyperviscosity(lam,dt)
+            lam_rhs = model.bve_adm(lam,zt)
+            lam = adams_bashforth_adm(lam,lam_rhs,dt,n)
+
+            z_adm[n] = ift(lam)
+
+        # 4. parameter
+        u = ft(dz0)
+        Mstar_Mu = ft(z_adm[0])
+        lhs = np.real(np.vdot(Mu, v))
+        rhs = np.real(np.vdot(u, Mstar_Mu))
+
+        err = abs(lhs-rhs) / max(abs(lhs), abs(rhs), 1e-30)   
+
+        print("adjoint ab3 test")
+        print("lhs =", lhs)
+        print("rhs =", rhs)
+        print("relative error =", err)        
+
+    #test_tlm(model,vor[0],dt,tmax,forcet)
+    #test_bve_adjoint(model, zt)
+    #test_adjoint_rk4(model,vor[0],dt,tmax,forcet)
+    test_adjoint_ab3(model,vor[0],dt,tmax,forcet)
