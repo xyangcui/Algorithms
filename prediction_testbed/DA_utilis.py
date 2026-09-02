@@ -117,7 +117,7 @@ class FourDVar:
             forcing = H(x_traj[:,i],obs_dim=K).T @ R_inv @ (y[:,i] - h(x_traj[:,i],obs_dim=K))
             x_adj = x_adj + forcing
             if i>0:
-                # step 2: integrate ADM.
+                # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
                 M = self.model_TLM(x_traj[:,i-1])
                 x_adj = M.T @ x_adj
         grad_Jo = -2 * x_adj
@@ -294,7 +294,6 @@ def Rho(localP, dist):
             rho[i,j] = comp_cov_factor(dist[i,j],localP)
 
     return rho
-# inflation
 # EnKF
 def enkf_update_array(xb,y,ObsOp,R,gamma=1.,loc=None):
     '''
@@ -338,7 +337,7 @@ def enkf_update_array(xb,y,ObsOp,R,gamma=1.,loc=None):
     return xb
 
 # square-root Filters
-#LETKF
+# LETKF
 def letkf_update_array(E,R,y,H,loc,gamma=1.0):
     '''
     Local Ensemble Transform Kalman Filter

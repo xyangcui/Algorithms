@@ -60,46 +60,6 @@ def breeding_vectors(x2,B,N,M_update,rescaled_dt=0.2,breeding_length=2):
     return delta
 
 # singular vectors (theoretical, needs jacobi of TLM, not practical).
-def singular_vectors_theoretical(x2,N,M_update,M_TLM,sv_dt,sv_length,scale_factor=5.):
-    '''
-      singular vectors.
-      Input
-        x2: inital state
-         N: retain numbers the number of members
-         M_update: model update
-         M_TLM:   Tangent linear operator
-         sv_length: sv times
-         sv_dt:  sv delta_t
-         scale: scale factor.
-      Output
-        x1: perturbation
-    '''
-
-    from numpy.linalg import svd
-    import numpy as np
-
-    K  = len(x2)
-    x1 = np.zeros((N,K))
-    # get TLM
-    TLM= np.eye(K)
-    for i in range(sv_length):
-        TLM = M_TLM(x2,sv_dt)
-        x2 = M_update(x2,sv_dt)
-
-    ADM = TLM.T      # adjoint model
-
-    _,_,Vh = svd(ADM@TLM,full_matrices=True)
-    V = Vh.T
-    #scaled.
-    norms = np.linalg.norm(V[:,:N], axis=1, keepdims=True)
-    norms[norms == 0] = 1
-    
-    scale_factors = scale_factor / norms #np.random.uniform(0, 1e-5, (1, N)) / norms
-    x1 = V[:,:N] * scale_factors    
-
-    return x1.T
-
-
 def re_orthogonalize(w,Q_sub,k):
     '''re-orthognalize vector w.'''
     # if the first step, return itself.
@@ -110,8 +70,6 @@ def re_orthogonalize(w,Q_sub,k):
         # second orthogonalize
         alpha_base = Q_sub.T@w
         w = w - Q_sub@alpha_base
-
-    return w
 
 def propagator(x, P, C0, C0T, CF, CF_trans, TLM, ADM):
     '''use TLM and ADM calculate L.T@L@dx'''
@@ -160,7 +118,7 @@ def lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv):
         # Lanczos normalization
         alpha = np.dot(w,q_new)
         w = w - alpha*q_new - beta*q_old
-        w = re_orthogonalize(w,Q[:,:i],i)
+        re_orthogonalize(w,Q[:,:i],i)
         beta = np.linalg.norm(w)
         if beta < tol & i > nsv:
             T = T[:i,:i]
@@ -188,6 +146,42 @@ def gaussian_sampling(SV, Pa, gamma, nmember, nsv):
     beta = gamma / sv_norm.mean()
     # 3. sampling [n,nsv]
     return truncnorm(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
+
+def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,Pa,rescale):
+    '''
+      singular vectors.
+      Input
+        x2: inital state
+         N: retain numbers the number of members
+         M_update: model update
+         M_TLM:   Tangent linear operator
+         sv_length: sv times
+         sv_dt:  sv delta_t
+         nmember: the number of member
+         Pa: analyze error variance vector
+         rescale: an emperical parameter to rescale for more precise ensemble spread.
+      Output
+        x1: perturbation
+    '''
+    from numpy.linalg import svd
+    import numpy as np
+
+    K  = len(x2)
+    # TLM jacobi
+    TLM= np.eye(K)
+    for i in range(sv_length):
+        TLM = M_TLM(x2,sv_dt)
+        x2  = M_update(x2,sv_dt)
+    # adjoint jacobi
+    ADM = TLM.T      
+    # SVD analysis
+    _,_,Vh = svd(ADM@TLM,full_matrices=True)
+    SV = Vh[:nsv,:].T
+    # sampling
+    ## use analyze error covariance to decide parameters
+    Alpha = gaussian_sampling(SV,Pa,rescale,nmember,nsv)       
+
+    return Alpha@SV.T
 
 def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale):
     '''
