@@ -65,36 +65,56 @@ def re_orthogonalize(w,Q_sub,k):
     # if the first step, return itself.
     if k != 0:
         # first orthogonalize
-        alpha_base = Q_sub.T@w
-        w = w - Q_sub@alpha_base
+        alpha_base = Q_sub.T.dot(w)
+        w = w - Q_sub.dot(alpha_base)
         # second orthogonalize
-        alpha_base = Q_sub.T@w
-        w = w - Q_sub@alpha_base
+        alpha_base = Q_sub.T.dot(w)
+        w = w - Q_sub.dot(alpha_base)
 
-def propagator(x, P, C0, C0T, CF, CF_trans, TLM, ADM):
+def propagator(x, P, r0, CF, TLM, ADM):
     '''use TLM and ADM calculate L.T@L@dx'''
-    # 1. forward integration
-    x1 = TLM(C0.dot(x))
-    # 2. normalize x1
-    xt1 = CF(P@x1)
-    xt2 = CF_trans(xt1)
-    xt  = P.T@xt2
-    # 3. backward integration
-    x2 = ADM(xt)
-    # 4. normalize x2
-    v  = C0T.dot(x2)
+    from scipy.sparse.linalg import spsolve
+    # forward integration to get L @ vt
+    v  = x/r0
+    x1 = TLM(v)
+    # use CF to normalize x1. like CF @ x1
+    rF = CF(P.dot(x1))
+    x2 = np.diag(rF*rF).dot(x1)
+    # backward integration to get L.T @ x2
+    u  = ADM(x2)
+    # u = Norm @ u
+    return r0*u
 
-    return v
+def build_T(alpha, beta):
+    alpha = np.asarray(alpha).flatten()
+    beta = np.asarray(beta).flatten()
+    
+    n = len(alpha)
+    
+    if n == 0:
+        return np.array([])
+    T = np.diag(alpha)
 
-def lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv):
+    if n > 1:
+        if len(beta) >= n - 1:
+            beta_used = beta[:n-1]
+        else:
+            beta_used = np.pad(beta, (0, n-1-len(beta)))
+        
+        T += np.diag(beta_used, 1)
+        T += np.diag(beta_used, -1)
+    return T
+
+def lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv):
     '''
     lanczos iteration to get singular vectors and singular value.
+    The problem is A @ x = c* C0 @ x.
     Input
       m: space.
       n: n*nsv.
       P: projection matrix.
-      C0: initial matrix
-      C0T: T C0
+      C0: function to get initial norm vector.
+      CF: function to get final norm vector.
       TLM: tangent linear model
       ADM: adjoint model
       tol: tolerance
@@ -103,36 +123,45 @@ def lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv):
       Q: a set of projection vectors
       T: a matrix in Krylov subspace
     '''
-    # 1. initialize
-    raw = np.random.randn(m)
-    q = (raw - raw.mean())/raw.std()
+    # 1. initialize (store norm space)
+    q = np.random.randn(m)
+    q = q / np.linalg.norm(q)
     Q = np.zeros([m,n]); Q[:,0] = q
     T = np.zeros([n,n])
-    w = q.copy()
-    q_new = q; q_old = np.zeros(m)
-    beta  = 0.
+    alpha = np.zeros(n)
+    beta = np.zeros(n-1)
     # 2. iteration
     for i in range(n):
-        # calculate matrix-vector dot
-        w = propagator(w,P,C0,C0T,CF,CF_trans,TLM,ADM)
+        # get initial norm matrix
+        r0 = np.sqrt(C0(Q[:,i]))
+        r0 = np.full(m,1)
+        # calculate matrix-vector dot A_p @ q
+        w = propagator(Q[:,i],P,r0,CF,TLM,ADM)
         # Lanczos normalization
-        alpha = np.dot(w,q_new)
-        w = w - alpha*q_new - beta*q_old
-        re_orthogonalize(w,Q[:,:i],i)
-        beta = np.linalg.norm(w)
-        if beta < tol & i > nsv:
-            T = T[:i,:i]
-            Q = Q[:,:i]
-            break
-        else:
-            q_old = q_new
-            q_new = w/beta
-        # store alpha, beta to T
-        T[i,i] = alpha
+        # update 
+        if i > 0:
+            w = w - beta[i-1] * Q[:,i-1]
+        # Orthogonal coefficient
+        alpha[i] = np.dot(Q[:,i], w)
+        # update
+        w = w - alpha[i]*Q[:,i]
+        if i > 0:
+            re_orthogonalize(w,Q[:,:i],i)
+        print(np.dot(w,Q[:,i]))
+        # update
         if i < n-1:
-            T[i,i+1] = beta; T[i+1,i] = beta
-        # store q to Q
-        Q[:,i+1] = q_new
+            beta[i] = np.linalg.norm(w)
+            if beta[i] < tol and i > nsv:
+                T = T[:i,:i]
+                Q = Q[:,:i]
+                break
+            else:
+                # get new perturbation in physical space.
+                Q[:, i+1] = w / beta[i]
+                
+        # store alpha, beta to T
+        #T = np.diag(alpha) + np.diag(beta, 1) + np.diag(beta, -1)
+        T = build_T(alpha[:i+1],beta[:i])
 
     return Q, T
 
@@ -145,7 +174,7 @@ def gaussian_sampling(SV, Pa, gamma, nmember, nsv):
     sv_norm = np.linalg.norm(SV_std,axis=0,keepdims=False)
     beta = gamma / sv_norm.mean()
     # 3. sampling [n,nsv]
-    return truncnorm(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
+    return truncnorm.rvs(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
 
 def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,Pa,rescale):
     '''
@@ -183,7 +212,7 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,P
 
     return Alpha@SV.T
 
-def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale):
+def singular_vectors(m,nsv,scale,tol,P,C0,CF,TLM,ADM,nmember,Pa,rescale):
     '''
     use lanczos method to get nsv singular vectors and get a ensemble.
     Input
@@ -191,9 +220,9 @@ def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale
       nsv: the number of singular vectors
       scale: determine the size of Krylov subspace
       tol: determine whether to cut iteration
-      C0[m,m]: norm matrix to determine initial state; analyze error.
+      C0: function to normalize the initial state.
       P[m,m]: project matrix (where to use)
-      CF: function to get norm matrix (determine evolving direction) perhaps total energy metrics.
+      CF: function to normalize the final state. (perhaps total energy metrics.)
       TLM: function to integrate TLM. (only needs input as self-variable)
       ADM: function to integrate ADM, (like TLM)
       nmember: the number of member
@@ -203,15 +232,15 @@ def singular_vectors(m,nsv,scale,tol,C0,P,CF,CF_trans,TLM,ADM,nmember,Pa,rescale
       ensemble[nmember,m]: a ensemble of forecast members
     '''
     import numpy as np
-    from scipy.sparse import csr_matrix
     n  = int(nsv * scale)
-    C0 = csr_matrix(C0); C0T = C0.T
     # 1. lanczos iteration (project to Krylov subspace)
-    Q, T = lanczos_iteration(m,n,P,C0,C0T,CF,CF_trans,TLM,ADM,tol,nsv)
+    Q, T = lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv)
+    print("T 不对称程度:", np.max(np.abs(T - T.T)))
+    print("Q 正交性误差:", np.linalg.norm(Q.T @ Q - np.eye(Q.shape[1])))
     # 2. SVD the small matrix T
-    eigenvalues, eigenvectors = np.linalg.eig(T)  
+    eigenvalues, eigenvectors = np.linalg.eig(T) 
     # 3. get Ritz vectors
-    SV = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors,out=Q)[:,:nsv]
+    SV = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors)[:,:nsv]
     # 4. generate members
     ## use analyze error covariance to decide parameters
     Alpha = gaussian_sampling(SV,Pa,rescale,nmember,nsv)

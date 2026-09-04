@@ -4,14 +4,17 @@ from pathlib import Path
 parent_dir = Path(__file__).parent.parent
 sys.path.append(str(parent_dir))
 
-from toy_models import L96, L96_TLM_operator, L96_adm, L96_tlm
-from solve_ode import runge_kuta4, rk4_nl_adm, rk4_nl_tlm
+from toy_models import L96, L96_adm
+from solve_ode import runge_kuta4, rk4_nl_adm
 from DA_utilis import FourDVar,h,Dh, FourDVar_practical
 import numpy as np
 import pickle
 
 '''
-    check a nan member and regenerate it.
+    Ensemble of Data Assimilation (EDA)
+    The procedure to generate a forecast ensemble by perturbing model and observation.
+    Firstly, a control number is generated without any perturbation.
+    Then, perturb both to generate a hierachy of models and observations.
 '''
 dt   = 0.05  # time unit
 K    = 40

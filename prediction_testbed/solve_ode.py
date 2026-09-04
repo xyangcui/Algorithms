@@ -167,4 +167,4 @@ def rk4_nl_adm(adm,nlm,zt,lam_new, dt):
     # l1 = model.bve_tlm(dzt, zt)
     lam_old += adm(l1_ad,zt)
 
-    return lam_old 
+    return lam_old

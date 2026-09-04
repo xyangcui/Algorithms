@@ -1,5 +1,6 @@
 import numpy as np
 from math import sin
+from solve_ode import runge_kuta4, rk4_nl_adm, rk4_nl_tlm
 
 # Runge-Kuta integration
 def RK4(rhs,state,dt,*args):
@@ -121,7 +122,6 @@ def L96(state,*args):
 def L96_tlm(state,z,*args):
 
     x = state
-    F = args[0]         #Forcing
     n = len(state)      #dims
     f = np.zeros(n,dtype=np.float64)  
 
@@ -251,3 +251,105 @@ def L96_para(state,*args):
 
     gu = -1.31*x-0.27
     return f+F-gu
+
+
+### functions to test ADM.
+def forward_integrate(state, steps, dt, model_func, save_traj=True):
+    """
+    前向积分（非线性或切线性模式）
+    
+    参数:
+        state : 初始状态向量 (shape: K,)
+        steps : 积分步数
+        dt    : 时间步长
+        model_func : 模式算子，函数形式 f(state) 返回导数
+        save_traj  : 是否保存完整轨迹 (默认 True)
+    
+    返回:
+        final_state : 终态 (K,)
+        traj        : 轨迹 (K, steps+1) 若 save_traj=True，否则为 None
+    """
+    K = len(state)
+    if save_traj:
+        traj = np.zeros((K, steps+1))
+        traj[:, 0] = state
+    else:
+        traj = None
+    
+    current = state.copy()
+    for i in range(steps):
+        current = runge_kuta4(model_func, current, dt)
+        if save_traj:
+            traj[:, i+1] = current
+    
+    return current, traj
+
+def adjoint_integrate(adjoint_state, traj, steps, dt, adjoint_func, model_func):
+    """
+    伴随积分（反向积分）
+    
+    参数:
+        adjoint_state : 终态伴随变量 (shape: K,)
+        traj          : 前向轨迹 (K, steps+1)，由 forward_integrate 返回
+        steps         : 积分步数
+        dt            : 时间步长
+        adjoint_func  : 伴随算子，函数形式 f(adjoint, state) 返回伴随导数
+        model_func    : 非线性模式算子（用于rk4_nl_adm内部，若不需要可设为 None，但这里保留）
+    
+    返回:
+        init_adjoint : 初始时刻的伴随变量 (K,)
+    """
+    x = adjoint_state.copy()
+    for i in range(steps, 0, -1):
+        x = rk4_nl_adm(adjoint_func, model_func, traj[:, i-1], x, dt)
+    return x
+
+class ModelIntegrator:
+    def __init__(self, model_func, adjoint_func, dt):
+        """
+        参数:
+            model_func  : 非线性模式函数 f(state) 返回导数
+            adjoint_func: 伴随算子函数 f(adjoint, state) 返回伴随导数
+            dt          : 时间步长
+        """
+        self.model_func = model_func
+        self.adjoint_func = adjoint_func
+        self.dt = dt
+    
+    def forward(self, state, steps, save_traj=True):
+        return forward_integrate(state, steps, self.dt, self.model_func, save_traj)
+    
+    def adjoint(self, adjoint_state, traj, steps):
+        return adjoint_integrate(adjoint_state, traj, steps, self.dt, 
+                                 self.adjoint_func, self.model_func)
+
+def test_adjoint_integration(integrator, zt, steps, eps=1e-6, tol=1e-5):
+    K = len(zt)
+    # 前向轨迹（参考）
+    _, traj = integrator.forward(zt, steps, save_traj=True)
+    
+    # 随机扰动和伴随向量
+    dx = np.random.randn(K)
+    dy = np.random.randn(K)
+    
+    # 有限差分 TLM
+    _, traj_plus = integrator.forward(zt + eps*dx, steps, save_traj=True)
+    tlm_dx = (traj_plus[:, -1] - traj[:, -1]) / eps
+    
+    # ADM
+    adm_dy = integrator.adjoint(dy, traj, steps)
+    
+    inner1 = np.dot(tlm_dx, dy)
+    inner2 = np.dot(dx, adm_dy)
+    diff = np.abs(inner1 - inner2)
+    print(f"<TLM,dy> = {inner1:.10f}, <dx,ADM> = {inner2:.10f}, diff = {diff:.2e}")
+    assert diff < tol, f"伴随测试失败！diff={diff} > {tol}"
+    print("测试通过")
+
+if __name__ == "__main__":
+
+    model = lambda x: L96(x, 8.)
+    adjoint = lambda a, x: L96_adm(a, x)
+    integrator = ModelIntegrator(model, adjoint, dt=0.05)
+    zt = np.random.randn(40)
+    test_adjoint_integration(integrator, zt, 3, eps=1e-6, tol=1e-5)
