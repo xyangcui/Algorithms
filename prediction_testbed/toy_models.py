@@ -118,6 +118,60 @@ def L96(state,*args):
 
     return f+F
 
+def L96_tlm(state,z,*args):
+
+    x = state
+    F = args[0]         #Forcing
+    n = len(state)      #dims
+    f = np.zeros(n,dtype=np.float64)  
+
+    if np.any(np.isnan(x)) or np.any(np.abs(x) > 1e10):
+        return np.zeros(n)
+    # boundary
+    f[0] = ((x[1] - x[n-2]) * z[n-1]+ (z[1] - z[n-2]) * x[n-1]- x[0])
+
+    f[1] = ((x[2] - x[n-1]) * z[0]+ (z[2] - z[n-1]) * x[0]- x[1])
+
+    f[n-1] = ((x[0] - x[n-3]) * z[n-2]+ (z[0] - z[n-3]) * x[n-2]- x[n-1])
+    # inner
+    for i in range(2, n-1):
+        f[i] = ((x[i+1] - x[i-2]) * z[i-1]+ (z[i+1] - z[i-2]) * x[i-1]- x[i])
+
+    return f
+
+def L96_adm(lam_new,z):
+
+    n = len(lam_new)      #dims
+    lam_old = np.zeros(n,dtype=np.float64)  
+    
+    if np.any(np.isnan(lam_new)) or np.any(np.abs(lam_new) > 1e10):
+        return np.zeros(n)
+    # boundary
+    # f[0] = (x[1] - x[n-2]) * z[n-1]+ (z[1] - z[n-2]) * x[n-1]- x[0]
+    lam_old[1]   +=  z[n-1]*lam_new[0]
+    lam_old[n-2] += -z[n-1]*lam_new[0]
+    lam_old[n-1] += (z[1]-z[n-2])*lam_new[0]
+    lam_old[0]   += -lam_new[0]
+    #f[1] = (x[2] - x[n-1]) * z[0]+ (z[2] - z[n-1]) * x[0]- x[1]
+    lam_old[2] += z[0]*lam_new[1]
+    lam_old[n-1] += -z[0]*lam_new[1] 
+    lam_old[0] += (z[2]-z[n-1])*lam_new[1]
+    lam_old[1] += -lam_new[1]
+    # f[n-1] = (x[0] - x[n-3]) * z[n-2]+ (z[0] - z[n-3]) * x[n-2]- x[n-1]
+    lam_old[0] += z[n-2]*lam_new[n-1]
+    lam_old[n-3] += -z[n-2]*lam_new[n-1] 
+    lam_old[n-2] += (z[0]-z[n-3])*lam_new[n-1]
+    lam_old[n-1] += -lam_new[n-1]    
+    # inner
+    for i in range(2, n-1):
+        # f[i] = (x[i+1] - x[i-2]) * z[i-1]+ (z[i+1] - z[i-2]) * x[i-1]- x[i]
+        lam_old[i+1] += z[i-1]*lam_new[i]
+        lam_old[i-2] += -z[i-1]*lam_new[i] 
+        lam_old[i-1] += (z[i+1]-z[i-2])*lam_new[i]
+        lam_old[i] += -lam_new[i] 
+
+    return lam_old
+
 # L96 TLM propagator
 def L96_TLM_operator(x,dt):
     #def L.

@@ -620,24 +620,22 @@ It can be de-aliased.
 
         return lam_old
 
-    def bve_adm_propagator(self,models,nstep,z_base,lam,forcet):
+    def bve_adm_propagator(self,models,n,z_base,lam,forcet):
         '''
         One step integration of ADM.
         Input
           models: a class of model.
-          nstep: current steps of integration.
+          n: current index of integration.
           z_base[nstep,ndims]: till now nonlinear states.
           lam: current linear state.
           forcet: forcing
         Output
           lam: adjoint variable
         '''
-        for n in range(nstep - 1, -1, -1):
-            zt = ft(z_base[n])
-
-            models.anti_alias(lam)
-            lam = models.hyperviscosity(lam,self.dt)
-            lam = rk4_nl_adm(models,zt,lam,self.dt,forcet)
+        zt = ft(z_base[n-1])
+        models.anti_alias(lam)
+        lam = models.hyperviscosity(lam,self.dt)
+        lam = rk4_nl_adm(models,zt,lam,self.dt,forcet)
 
         return lam
 
@@ -848,6 +846,7 @@ if __name__ == "__main__":
         # TLM final perturbation
         Mu = dzt.copy()
         # terminal adjoint
+        print(z_base.shape)
         # random terminal adjoint variable
         rng = np.random.default_rng(5678)
         lam_phys = rng.standard_normal(z0.shape)
@@ -857,20 +856,20 @@ if __name__ == "__main__":
         v = lam
         #lam = Mu.copy()
         z_adm[-1] = ift(lam)
-        for n in range(nstep - 1, -1, -1):
-            zt = ft(z_base[n])
+        for n in range(nstep, 0, -1):
+            zt = ft(z_base[n-1])
 
             model.anti_alias(lam)
             lam = model.hyperviscosity(lam,dt)
             lam = rk4_nl_adm(model,zt,lam,dt,forcet)
 
-            z_adm[n] = ift(lam)
+            z_adm[n-1] = ift(lam)
 
         # 4. parameter
         u = ft(dz0)
         Mstar_Mu = ft(z_adm[0])
-        lhs = np.real(np.vdot(Mu, v))
-        rhs = np.real(np.vdot(u, Mstar_Mu))
+        lhs = np.real(np.vdot(ift(Mu), ift(v)))
+        rhs = np.real(np.vdot(ift(u), ift(Mstar_Mu)))
 
         err = abs(lhs-rhs) / max(abs(lhs), abs(rhs), 1e-30)   
 
@@ -953,5 +952,5 @@ if __name__ == "__main__":
 
     #test_tlm(model,vor[0],dt,tmax,forcet)
     #test_bve_adjoint(model, zt)
-    #test_adjoint_rk4(model,vor[0],dt,tmax,forcet)
-    test_adjoint_ab3(model,vor[0],dt,tmax,forcet)
+    test_adjoint_rk4(model,vor[0],dt,tmax,forcet)
+    #test_adjoint_ab3(model,vor[0],dt,tmax,forcet)

@@ -302,7 +302,7 @@ def SOES_vectors(base, nmember):
     '''
     Its perturbations precisely keep the first two moments: mean and variance.
     Input
-      base[ndim, nsample]: historical records of forecast.
+      base[ndim, nsample]: historical records of forecast. analysis error
       nmember: the number of forecast member.
     Ouput
       Omega[nmember, ndim]: a ensemble of n members.
@@ -310,9 +310,8 @@ def SOES_vectors(base, nmember):
     from numpy.linalg import svd
     from math import sqrt
     # 1. calculate anomaly
-    base_anomaly = base - base.mean(aixs=1)
     # 2. SVD anomalous field to get direction and singular values.
-    U, Sigma, _ = svd(base_anomaly)
+    U, Sigma, _ = svd(base)
     # 3. key: construct a constrained random orthogonal matrix. (fullfill the two-order condition)
     Omega = construct_constrained_matrix(nmember) # [nmember, nmember-1]
     # 4. cut off U and Sigma to nmember and restore with Omega.

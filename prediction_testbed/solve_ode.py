@@ -81,11 +81,11 @@ def adams_bashforth_adm(lam_new, lam_dt1, dt, n):
     return lam_old
 
 # Runge-Kuta integration
-def runge_kuta4(rhs,state,dt,*args):
-    k1 = rhs(state,*args)
-    k2 = rhs(state+k1*dt/2.,*args)
-    k3 = rhs(state+k2*dt/2.,*args)
-    k4 = rhs(state+k3*dt,*args)
+def runge_kuta4(rhs,state,dt,):
+    k1 = rhs(state)
+    k2 = rhs(state+k1*dt/2.)
+    k3 = rhs(state+k2*dt/2.)
+    k4 = rhs(state+k3*dt)
 
     return state+(k1+2*k2+2*k3+k4)*dt/6.
 
@@ -122,10 +122,11 @@ def rk4_nl_tlm(tlm, nlm, zt, dzt, dt):
 def rk4_nl_adm(adm,nlm,zt,lam_new, dt):
     '''
     RK4: adjoint model version.
+    Assume index n. (the integrating step is n-1)
     Input
       model: a class of baro model.
-      zt: time n nonlinear state.
-      lam_new: time n linear state.
+      zt: nonlinear state at index n-1.
+      lam_new: adjoint state at index n.
       dt: time interval
     Output
       lam_old: adjoint variable.

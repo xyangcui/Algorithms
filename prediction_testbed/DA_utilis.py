@@ -84,7 +84,7 @@ class FourDVar:
         # step3: get value of measurement error
         Jo = 0.0
         for i in range(N):
-            innovation = y[:, i] - h(x_traj[:, i],obs_dim=K)
+            innovation = y[:, i] - h(x_traj[:, i],K)
             Jo += innovation.T @ R_inv @ innovation
             
         return Jb + Jo
@@ -112,14 +112,17 @@ class FourDVar:
             x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
         # step2: get gradient of observation.
         x_adj = np.zeros(K)
-        for i in range(N-1, 0, -1):
+        for i in range(N-1, -1, -1):
             # step 1: calc forcing.
-            forcing = H(x_traj[:,i],obs_dim=K).T @ R_inv @ (y[:,i] - h(x_traj[:,i],obs_dim=K))
+            forcing = H(x_traj[:,i],K).T @ R_inv @ (y[:,i] - h(x_traj[:,i],K))
             x_adj = x_adj + forcing
             if i>0:
                 # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
                 M = self.model_TLM(x_traj[:,i-1])
                 x_adj = M.T @ x_adj
+        # observation contribution at t_0
+        #forcing = H(x_traj[:, 0], K).T@ R_inv@ (y[:, 0] - h(x_traj[:, 0], K))   
+        #x_adj += forcing
         grad_Jo = -2 * x_adj
         #step3: get gradient of background.
         grad_Jb = 2* B_inv @ (x-xb)
@@ -166,7 +169,7 @@ class FourDVar:
         return r
 
     # executive function.
-    def four_dims_var_optimizer(self,xb,B,y,R,H,h,max_iter):
+    def four_dims_var_optimizer(self,xb,B,y,R,H,h,max_iter,tol):
         '''
         iteration for it. main procedure
         Input
@@ -176,7 +179,7 @@ class FourDVar:
             R:  obs covariance,               [nobs,nstep]
             H:  obs operator.                 [nobs,nstep]
             h:  obs function.
-
+          tol:  tolerance of gradient
         Output
             xa: analysis value.               [ndim,]
         '''
@@ -226,7 +229,7 @@ class FourDVar:
             cost_old = cost_new
 
             # judgement
-            if np.linalg.norm(grad_old) < 1e-1:
+            if np.linalg.norm(grad_old) < tol:
                 break
 
         print(f'total times: {iterate+1}')
@@ -234,6 +237,201 @@ class FourDVar:
 
         return x_old
 
+
+class FourDVar_practical:
+    '''
+      strongly constrained(SC)-4DVar
+      an easy algorithm because prediction step must equal to observation's.
+
+      Definitions
+        model: state evolution function.
+        model_TLM: tangent linear model. 
+        rk4: method, how to integrate.
+
+      Reference:
+        https://www.ecmwf.int/en/elibrary/79860-data-assimilation-concepts-and-methods
+    '''
+
+    def __init__(self,model,model_ADM,rk4,rk4_adm):
+        self.model = model
+        self.model_ADM = model_ADM
+        self.RK4 = rk4
+        self.rk4_adm = rk4_adm
+
+    # cost function
+    def cost_function(self,x,xb,B_inv,R_inv,y,h,N):
+        '''
+          cost function of 4DVar
+          type: J = 0.5*prior_error + 0.5*measure_error
+          Input
+             x: current state    (ndim)
+            xb: prior state      (ndim)  
+            B_inv: inversed background covariance matrix (ndim,ndim)
+             y: measurement / observation
+             h: operational function h(x)
+             N: time steps in an assimilation window
+          Output
+             value of cost.
+        '''
+        K = len(x)  # number of dims
+        # step1: get values in an assimilation window
+        x_traj = np.zeros((K,N)); x_traj[:,0] = x
+        for i in range(N-1):
+            x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
+        # step2: get value of prior error
+        dx = x - xb
+        Jb = dx.T @ B_inv @ dx
+        # step3: get value of measurement error
+        Jo = 0.0
+        for i in range(N):
+            innovation = y[:, i] - h(x_traj[:, i],K)
+            Jo += innovation.T @ R_inv @ innovation
+            
+        return Jb + Jo
+
+    # gradient for optimization.
+    def gradient(self,x, xb, B_inv, y, R_inv, H, h, N):
+        '''
+          adjoint-based method to calculate gradient.
+          Input
+            x: recent state.
+            xb: background state.
+            B_inv: inverted background covariance matrix
+            y: observation
+            R_inv: observational covar
+            H: observational operator
+            h: observation function
+            N: times of observation.
+          Output
+            gradient dimensions like x.
+        '''
+        K = len(x)  #number of dim
+        # step1: get values in an assimilation window.
+        x_traj = np.zeros((K,N)); x_traj[:,0] = x
+        for i in range(N-1):
+            x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
+        # step2: get gradient of observation.
+        x_adj = np.zeros(K)
+        for i in range(N-1, -1, -1):
+            # step 1: calc forcing.
+            forcing = H(x_traj[:,i],K).T @ R_inv @ (y[:,i] - h(x_traj[:,i],K))
+            x_adj = x_adj + forcing
+            if i>0:
+                # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
+                x_adj = self.rk4_adm(self.model_ADM,self.model,x_traj[:,i-1],x_adj)
+        grad_Jo = -2 * x_adj
+        #step3: get gradient of background.
+        grad_Jb = 2* B_inv @ (x-xb)
+
+        return grad_Jb + grad_Jo
+
+    # optimizer quais Newton BFGS.
+    def LBFGS_update(self,grad,s_list,y_list):
+        '''
+        unconstrained optimization algorithm.
+        quasi Newton method. limited-BFGS. for optimal minimum problem.
+        if q = -grad, minimum; else q = grad, maximum
+        reference: https://zhuanlan.zhihu.com/p/514576143
+        Input
+          grad: gradient f(x_k)
+          s_list: list retained vector s. sequence: early to late
+          y_list: list retained vector y.
+        Output
+          r: increment. a vector
+      '''
+        # loop-1: reverse traversal.
+        q = -grad; alpha_list = []
+        for i in reversed(range(len(s_list))):
+            s = s_list[i]
+            y = y_list[i]
+            rho = 1.0 / np.dot(y.T, s)
+            alpha = rho*np.dot(s.T,q)
+            q -= alpha*y
+            alpha_list.append(alpha)
+        # loop-2: traversal.
+        if len(s_list) == 0:
+            gamma = 1.
+        else: 
+            gamma = np.dot(s_list[-1].T, y_list[-1]) / np.dot(y_list[-1].T, y_list[-1])
+        r = gamma * q
+
+        for i in range(len(s_list)):
+            s = s_list[i]
+            y = y_list[i]
+            rho = 1.0 / np.dot(y.T, s)       
+            beta = rho * np.dot(y.T, r)
+            r += (alpha_list[-(i+1)] - beta) * s
+
+        return r
+
+    # executive function.
+    def four_dims_var_optimizer(self,xb,B,y,R,H,h,max_iter,tol):
+        '''
+        iteration for it. main procedure
+        Input
+            xb: background state [ndim,]
+            B:  background covariance martrix [ndim,ndim]
+            y:  real obs.                     [nobs,nstep]
+            R:  obs covariance,               [nobs,nstep]
+            H:  obs operator.                 [nobs,nstep]
+            h:  obs function.
+          tol:  tolerance of gradient
+        Output
+            xa: analysis value.               [ndim,]
+        '''
+        # dimensions
+        K = xb.shape[0]   # state dim
+        m = y.shape[0]    # obs dim
+        n = y.shape[1]    # obs number
+
+        # invert R and B.
+        R_inv = np.linalg.inv(R); B_inv = np.linalg.inv(B)
+
+        # iteration. (x0 newest; xb the old one)
+        x_old = xb
+        s_list = []
+        y_list = []
+
+        grad_old = self.gradient(x_old, xb, B_inv, y, R_inv, H, h, n)
+        cost_old = self.cost_function(x_old, xb, B_inv, R_inv, y, h, n)
+
+        for iterate in range(max_iter):
+        
+            #Limited BFGS
+            d = self.LBFGS_update(grad_old,s_list,y_list)
+
+            # line search
+            alpha = 1.0
+            x_new = x_old + alpha*d                          
+            cost_new = self.cost_function(x_new, xb, B_inv, R_inv, y, h, n)
+
+            while (cost_new > cost_old+1e-4*alpha*np.dot(grad_old.T,d)) & (alpha > 0.1):
+                alpha *= 0.5
+                x_new = x_old + alpha*d                  
+                cost_new = self.cost_function(x_new, xb, B_inv, R_inv, y, h, n)
+
+            grad_new = self.gradient(x_new, xb, B_inv, y, R_inv, H, h, n)
+
+            s_list.append(x_new-x_old)
+            y_list.append(grad_new-grad_old)
+
+            if len(s_list) > 10:
+                s_list.pop(0)
+                y_list.pop(0)
+
+            # fourth step: give values.
+            x_old = x_new
+            grad_old = grad_new
+            cost_old = cost_new
+
+            # judgement
+            if np.linalg.norm(grad_old) < tol:
+                break
+
+        print(f'total times: {iterate+1}')
+        print(f'grads norm: {np.linalg.norm(grad_old)}')
+        print(f'final cost: {cost_old}')
+        return x_old
 # 3DVar
 
 
