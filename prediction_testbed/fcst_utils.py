@@ -71,41 +71,21 @@ def re_orthogonalize(w,Q_sub,k):
         alpha_base = Q_sub.T.dot(w)
         w = w - Q_sub.dot(alpha_base)
 
-def propagator(x, P, r0, CF, TLM, ADM):
+        return w
+
+def propagator(x, P, r0, rf, TLM, ADM):
     '''use TLM and ADM calculate L.T@L@dx'''
-    from scipy.sparse.linalg import spsolve
     # forward integration to get L @ vt
     v  = x/r0
     x1 = TLM(v)
     # use CF to normalize x1. like CF @ x1
-    rF = CF(P.dot(x1))
-    x2 = np.diag(rF*rF).dot(x1)
+    x2 = rf*x1
     # backward integration to get L.T @ x2
     u  = ADM(x2)
     # u = Norm @ u
-    return r0*u
+    return u/r0
 
-def build_T(alpha, beta):
-    alpha = np.asarray(alpha).flatten()
-    beta = np.asarray(beta).flatten()
-    
-    n = len(alpha)
-    
-    if n == 0:
-        return np.array([])
-    T = np.diag(alpha)
-
-    if n > 1:
-        if len(beta) >= n - 1:
-            beta_used = beta[:n-1]
-        else:
-            beta_used = np.pad(beta, (0, n-1-len(beta)))
-        
-        T += np.diag(beta_used, 1)
-        T += np.diag(beta_used, -1)
-    return T
-
-def lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv):
+def lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol):
     '''
     lanczos iteration to get singular vectors and singular value.
     The problem is A @ x = c* C0 @ x.
@@ -113,8 +93,8 @@ def lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv):
       m: space.
       n: n*nsv.
       P: projection matrix.
-      C0: function to get initial norm vector.
-      CF: function to get final norm vector.
+      r0: Norm vector of initial state
+      rf: Norm vector of final state
       TLM: tangent linear model
       ADM: adjoint model
       tol: tolerance
@@ -132,11 +112,8 @@ def lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv):
     beta = np.zeros(n-1)
     # 2. iteration
     for i in range(n):
-        # get initial norm matrix
-        r0 = np.sqrt(C0(Q[:,i]))
-        r0 = np.full(m,1)
         # calculate matrix-vector dot A_p @ q
-        w = propagator(Q[:,i],P,r0,CF,TLM,ADM)
+        w = propagator(Q[:,i],P,np.sqrt(r0),rf,TLM,ADM)
         # Lanczos normalization
         # update 
         if i > 0:
@@ -146,32 +123,31 @@ def lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv):
         # update
         w = w - alpha[i]*Q[:,i]
         if i > 0:
-            re_orthogonalize(w,Q[:,:i],i)
-        print(np.dot(w,Q[:,i]))
+            w = re_orthogonalize(w,Q[:,:i+1],i)
+        #print(np.dot(w,Q[:,i]))
         # update
         if i < n-1:
             beta[i] = np.linalg.norm(w)
-            if beta[i] < tol and i > nsv:
-                T = T[:i,:i]
-                Q = Q[:,:i]
+            if beta[i] < tol:
+                Q[:, i+1] = w / beta[i] 
+                Q = Q[:,:i+1]
+                T = T[:i+1,:i+1]
+                print(f'step {i+1} converges, so cut off.')
                 break
             else:
                 # get new perturbation in physical space.
-                Q[:, i+1] = w / beta[i]
-                
-        # store alpha, beta to T
-        #T = np.diag(alpha) + np.diag(beta, 1) + np.diag(beta, -1)
-        T = build_T(alpha[:i+1],beta[:i])
+                Q[:, i+1] = w / beta[i]  
+    # store alpha, beta to T
+    k = Q.shape[1]
+    T = np.diag(alpha[:k]) + np.diag(beta[:k-1], 1) + np.diag(beta[:k-1], -1)
 
     return Q, T
 
-def gaussian_sampling(SV, Pa, gamma, nmember, nsv):
+def gaussian_sampling(SV_scaled, gamma, nmember, nsv):
     '''sampling parameters to linearly combine SVs'''
     from scipy.stats import truncnorm
-    # 1. standardize
-    SV_std = SV / Pa
-    # 2. norm
-    sv_norm = np.linalg.norm(SV_std,axis=0,keepdims=False)
+    # 1. norm
+    sv_norm = np.linalg.norm(SV_scaled,axis=0,keepdims=False)
     beta = gamma / sv_norm.mean()
     # 3. sampling [n,nsv]
     return truncnorm.rvs(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
@@ -206,23 +182,25 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,P
     # SVD analysis
     _,_,Vh = svd(ADM@TLM,full_matrices=True)
     SV = Vh[:nsv,:].T
+    SV_scaled = SV @ Pa[:,None]
     # sampling
     ## use analyze error covariance to decide parameters
-    Alpha = gaussian_sampling(SV,Pa,rescale,nmember,nsv)       
+    Alpha_half = gaussian_sampling(SV_scaled,rescale,nmember//2,nsv)
+    Alpha = np.concatenate([Alpha_half, -Alpha_half],axis=0)      
 
     return Alpha@SV.T
 
-def singular_vectors(m,nsv,scale,tol,P,C0,CF,TLM,ADM,nmember,Pa,rescale):
+def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Pa,rescale,verbos=False):
     '''
     use lanczos method to get nsv singular vectors and get a ensemble.
     Input
       m: length of space.
       nsv: the number of singular vectors
-      scale: determine the size of Krylov subspace
+      scale: determine the size of Krylov subspace. (scale*nsv) <= m
       tol: determine whether to cut iteration
-      C0: function to normalize the initial state.
+      r0: Norm vector of initial state.
       P[m,m]: project matrix (where to use)
-      CF: function to normalize the final state. (perhaps total energy metrics.)
+      CF: fNorm vector of final state. (perhaps total energy metrics.)
       TLM: function to integrate TLM. (only needs input as self-variable)
       ADM: function to integrate ADM, (like TLM)
       nmember: the number of member
@@ -232,20 +210,67 @@ def singular_vectors(m,nsv,scale,tol,P,C0,CF,TLM,ADM,nmember,Pa,rescale):
       ensemble[nmember,m]: a ensemble of forecast members
     '''
     import numpy as np
-    n  = int(nsv * scale)
+    n = min(m, int(nsv * scale))
     # 1. lanczos iteration (project to Krylov subspace)
-    Q, T = lanczos_iteration(m,n,P,C0,CF,TLM,ADM,tol,nsv)
-    print("T 不对称程度:", np.max(np.abs(T - T.T)))
-    print("Q 正交性误差:", np.linalg.norm(Q.T @ Q - np.eye(Q.shape[1])))
-    # 2. SVD the small matrix T
-    eigenvalues, eigenvectors = np.linalg.eig(T) 
-    # 3. get Ritz vectors
-    SV = np.matmul(Q, np.sqrt(eigenvalues)*eigenvectors)[:,:nsv]
-    # 4. generate members
-    ## use analyze error covariance to decide parameters
-    Alpha = gaussian_sampling(SV,Pa,rescale,nmember,nsv)
+    Q, T = lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol)
+    if verbos is True:
+        AQ = np.column_stack([propagator(Q[:, j],P,r0,rf,TLM,ADM) for j in range(Q.shape[1])])
+        T_exact = Q.T @ AQ
+        print("T symmetry =:", np.max(np.abs(T - T.T)))
+        print("Q orth error =:", np.linalg.norm(Q.T @ Q - np.eye(Q.shape[1])))
+        print("T - QTAQ =",np.linalg.norm(T - T_exact))
+        print("eig(T) =",np.linalg.eigvalsh(T))
+        print("eig(sym(QTAQ)) =",np.linalg.eigvalsh(0.5*(T_exact + T_exact.T)))
+        print("||T-QTAQ|| =", np.linalg.norm(T - T_exact))
+        print("outside tridiagonal =",
+            np.linalg.norm(T_exact - np.diag(np.diag(T_exact))
+                     - np.diag(np.diag(T_exact,1),1)
+                     - np.diag(np.diag(T_exact,-1),-1)))
+        Ax1 = propagator(Q[:, 0],P,r0,rf,TLM,ADM)
+        Ax2 = propagator(Q[:, 0],P,r0,rf,TLM,ADM)
+        print("A repeat =", np.linalg.norm(Ax1-Ax2))
+        H = 0.5 * (T_exact + T_exact.T)
 
-    return Alpha@SV.T
+        print("diag error:")
+        print(np.diag(T) - np.diag(H))
+
+        print("offdiag error:")
+        print(np.diag(T, 1) - np.diag(H, 1))
+
+        print("diag norm error =",
+            np.linalg.norm(np.diag(T) - np.diag(H)))
+
+        print("offdiag norm error =",
+            np.linalg.norm(np.diag(T,1) - np.diag(H,1)))
+
+        print("max diag error =",
+            np.max(np.abs(np.diag(T) - np.diag(H))))
+
+        print("max offdiag error =",
+            np.max(np.abs(np.diag(T,1) - np.diag(H,1))))
+
+        for i in range(Q.shape[1]):
+            print(
+                f"{i:2d}  "
+                f"T={T[i,i]: .12e}  "
+                f"H={H[i,i]: .12e}  "
+                f"diff={T[i,i]-H[i,i]: .12e}"
+            )
+    # 2. SVD the small matrix T
+    eigenvalues, eigenvectors = np.linalg.eigh(T) 
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+    # 3. get Ritz vectors
+    minimal_n = min(len(eigenvalues),nsv)
+    SV = np.matmul(Q, eigenvectors)[:,:minimal_n]/ np.sqrt(r0[:, None])
+    SV_scaled = SV * Pa[:, None]
+    # 4. generate members
+    ## use analyze error covariance to decide parameters [nmember,nsv]
+    Alpha_half = gaussian_sampling(SV_scaled,rescale,nmember//2,minimal_n)
+    Alpha = np.concatenate([Alpha_half, -Alpha_half],axis=0)
+    
+    return Alpha@SV_scaled.T
 
 
 # type-3: Nonlinear Lyapunov Vectors (NLLVs)

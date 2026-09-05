@@ -39,9 +39,9 @@ for icase in range(ncase):
 # projection matrix, currently set to identified matrix.
 P = np.eye(K)
 # a function to calculate total energy metrics.
-def total_energy_norm(x):
+def total_energy_norm(K):
     '''normalize x by its total energy.'''
-    return x**2  
+    return np.full(K,1,dtype=float) 
 # function to integrate TLM. (only needs input as self-variable)
 def TLM(x,zt,N,dt):
     for i in range(N):
@@ -119,12 +119,12 @@ sv_t  = 1.  # 1 tu
 sv_dt = 0.1 # 0.1 tu
 icase = 0
 sv = singular_vectors(m=K, 
-                      nsv=K, 
+                      nsv=10, 
                       scale=3, 
                       tol=1e-10, 
                       P=P, 
-                      C0=lambda x: total_energy_norm(x),
-                      CF=lambda x: total_energy_norm(x),
+                      r0=total_energy_norm(K),
+                      rf=total_energy_norm(K),
                       TLM = lambda x: TLM(x,initial_state[:,0,icase],int(sv_t/sv_dt),sv_dt),
                       ADM = lambda x: ADM(x,initial_state[:,0,icase],int(sv_t/sv_dt),sv_dt),
                       nmember=50,
