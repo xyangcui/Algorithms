@@ -33,7 +33,7 @@ reg_param = 1e-6 * np.trace(B) / K
 B += reg_param * np.eye(K)
 # create psedo observation.
 # observation matrix
-R = np.diag(0.3 * np.diag(B))
+R = np.diag(np.diag(B))
 np.random.seed(42)   # for reproducibility
 obs_noise = np.random.multivariate_normal(mean=np.zeros(K),cov=R,size=X.shape[1])
 Y = X + obs_noise.T

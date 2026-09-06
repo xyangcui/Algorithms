@@ -6,7 +6,8 @@ sys.path.append(str(parent_dir))
 
 from toy_models import L96, L96_adm
 from solve_ode import runge_kuta4, rk4_nl_adm
-from DA_utilis import h,Dh, FourDVar_practical
+#from DA_utilis import h,Dh, FourDVar_practical
+from DA_utilis_fixed import h, Dh, FourDVar_practical
 import numpy as np
 import pickle
 '''
@@ -20,12 +21,14 @@ K    = 40
 F    = 8.
 tmax = 3     # max integration
 nt   = int(tmax/dt) 
-bg_coeff = 0.5 # use bg_coeff*B to perturb true value
+bg_coeff =   1.5# use bg_coeff*B to perturb true value
+bg_control = 0.8
 tof  = 200   # time of forecast
 nmember = 50   # number of members
-obs_coeff = 0.3
+obs_control = 0.1
+obs_coeff   = 0.15
 DA_dt     = 0.005   # dt of DA. propagate slowly to include small dynamics
-DA_window = 0.2 # length of DA window 0.2tu.
+DA_window = 0.15 # length of DA window 0.2tu.
 # load ture value and observation
 with open('database.pkl', 'rb') as f:
     data = pickle.load(f)
@@ -52,22 +55,27 @@ rng = np.random.default_rng(42)
 # shape = (K, nmember+1, tof)
 # --------------------------------------------------
 initial_state = np.zeros((K, nmember + 1, tof),dtype=np.float64)
+B_control = bg_control*B
 B_perturb = bg_coeff*B
 # --------------------------------------------------
 # Observations
 # shape = (K, nobs, nmember+1, tof)
 # --------------------------------------------------
 observation = np.zeros((K, nobs, nmember + 1, tof),dtype=np.float64)
-R = np.diag(obs_coeff * np.diag(B))
+R_control = obs_control*R
+R_perturb = obs_coeff*R
 
 for icase, idx in enumerate(forecast_idx):
     # ==============================================
     # control initial state
     # truth + background error
     # ==============================================
-    perturb = rng.multivariate_normal(mean=np.zeros(K),cov=B_perturb)
-    xb_control = real[:, idx] + perturb
-    initial_state[:, :, icase] = xb_control[:,None]
+    xb_error = rng.multivariate_normal(mean=np.zeros(K),cov=B_control)
+    xb_control = real[:, idx] + xb_error
+    initial_state[:, 0, icase] = xb_control
+    ## perturb it
+    perturb = rng.multivariate_normal(mean=np.zeros(K),cov=B_perturb,size=(nmember)).T
+    initial_state[:, 1:, icase] = real[:, idx][:,None] + perturb  
     # ==================================================
     # 3. Generate pseudo observations
     # Start from truth at background time
@@ -79,14 +87,14 @@ for icase, idx in enumerate(forecast_idx):
         x_truth[:,iobs+1] = runge_kuta4(lambda x: L96(x,F),x_truth[:,iobs],DA_dt)
     
     ## psedo observation
-    obs_error = rng.multivariate_normal(mean=np.zeros(K),cov=R,size=nobs)
+    obs_error = rng.multivariate_normal(mean=np.zeros(K),cov=R_control,size=nobs)
     y = x_truth[:,1::2] + obs_error.T
     observation[:, :, 0, icase] = y
     # ==============================================
     # nmember perturbed observations
     # ==============================================
-    obs_perturb = rng.multivariate_normal(mean=np.zeros(K),cov=R,size=(nmember,nobs)).T
-    observation[:, :, 1:, icase] = y[:, :, None] + obs_perturb
+    obs_perturb = rng.multivariate_normal(mean=np.zeros(K),cov=R_perturb,size=(nmember,nobs)).T
+    observation[:, :, 1:, icase] = x_truth[:,1::2][:, :, None] + obs_perturb
 
 print(initial_state.shape) # (3, 101, 200) (dim,nmember,ncase)
 print(observation.shape) # (3, 10, 101, 200) (dim,windows,nmember,ncase)
@@ -102,8 +110,8 @@ DA_module = FourDVar_practical(l96,l96_adm,rk4,rk4_adm)
 n = int(DA_window/DA_dt)
 # DA test
 def DA_test(DA):
-    nm = 1; nc = 20
-    xa_start = DA.four_dims_var_optimizer(initial_state[:,nm,nc],B_perturb,observation[:,:,nm,nc],R,obs_idx,n,Dh,h,max_iter=1000,tol=1e-7)
+    nm = 0; nc = 100
+    xa_start = DA.four_dims_var_optimizer_scipy(initial_state[:,nm,nc],B_perturb,observation[:,:,nm,nc],R_perturb,obs_idx,n,Dh,h,max_iter=150,tol=1e-6)
     xa = np.zeros((K,nt+1))
     xa[:,0] = xa_start.copy()
     for i in range(nt):
@@ -115,7 +123,7 @@ def DA_test(DA):
     for i in range(nt):
         xb[:,i+1] = runge_kuta4(l96,xb[:,i],dt)
 
-    x_truth = real[:,forecast_idx[0]:forecast_idx[0]+nt+1]
+    x_truth = real[:,forecast_idx[nc]:forecast_idx[nc]+nt+1]
 
     RMSEb = np.linalg.norm(xb-x_truth,axis=1)
     RMSEa = np.linalg.norm(xa-x_truth,axis=1)
