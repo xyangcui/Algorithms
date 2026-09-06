@@ -105,7 +105,7 @@ def start_EDA():
         for nm in range(nmember+1):
             initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer(initial_state[:,nm,ncase],B_perturb,
                                                                       observation[:,:,nm,ncase],R,obs_idx,n,
-                                                                       Dh,h,max_iter=1000,tol=1e-7)
+                                                                       Dh,h,max_iter=1000,tol=1e-5)
     # store EDA
     with open('ensembleDA.pkl', 'wb') as f:
         pickle.dump(initial_state, f)

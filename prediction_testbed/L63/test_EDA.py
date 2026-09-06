@@ -20,11 +20,12 @@ K    = 40
 F    = 8.
 tmax = 3     # max integration
 nt   = int(tmax/dt) 
-bg_coeff = 0.5  # use bg_coeff*B to perturb true value
+bg_coeff = 0.5 # use bg_coeff*B to perturb true value
 tof  = 200   # time of forecast
 nmember = 50   # number of members
+obs_coeff = 0.3
 DA_dt     = 0.005   # dt of DA. propagate slowly to include small dynamics
-DA_window = 0.15 # length of DA window 0.2tu.
+DA_window = 0.2 # length of DA window 0.2tu.
 # load ture value and observation
 with open('database.pkl', 'rb') as f:
     data = pickle.load(f)
@@ -57,7 +58,7 @@ B_perturb = bg_coeff*B
 # shape = (K, nobs, nmember+1, tof)
 # --------------------------------------------------
 observation = np.zeros((K, nobs, nmember + 1, tof),dtype=np.float64)
-R_perturb = R
+R = np.diag(obs_coeff * np.diag(B))
 
 for icase, idx in enumerate(forecast_idx):
     # ==============================================
@@ -84,8 +85,8 @@ for icase, idx in enumerate(forecast_idx):
     # ==============================================
     # nmember perturbed observations
     # ==============================================
-    obs_perturb = rng.multivariate_normal(mean=np.zeros(K),cov=R_perturb,size=(nmember,nobs)).T
-    observation[:, :, 1:, icase] = y[:, :, None] #+ obs_perturb
+    obs_perturb = rng.multivariate_normal(mean=np.zeros(K),cov=R,size=(nmember,nobs)).T
+    observation[:, :, 1:, icase] = y[:, :, None] + obs_perturb
 
 print(initial_state.shape) # (3, 101, 200) (dim,nmember,ncase)
 print(observation.shape) # (3, 10, 101, 200) (dim,windows,nmember,ncase)
@@ -99,35 +100,16 @@ rk4 = lambda x,y: runge_kuta4(x,y,DA_dt)
 rk4_adm = lambda x,y,z,q: rk4_nl_adm(x,y,z,q,DA_dt)
 DA_module = FourDVar_practical(l96,l96_adm,rk4,rk4_adm)
 n = int(DA_window/DA_dt)
-def start_EDA():
-
-    for ncase in range(tof):
-        for nm in range(nmember+1):
-            initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer(initial_state[:,nm,ncase],B,
-                                                                      observation[:,:,nm,ncase],R,obs_idx,n,
-                                                                       Dh,h,max_iter=1000,tol=1e-7)
-    # store EDA
-    with open('ensembleDA.pkl', 'wb') as f:
-        pickle.dump(initial_state, f)
-    # store true trajectories
-    x_truth = np.zeros((K,nt+1,tof),dtype=np.float64)
-    for i in range(tof):
-        x_truth[:,:,i] = real[:,i:i+nt+1]
-    with open('forecast_truth.pkl', 'wb') as f:
-        pickle.dump(x_truth, f)    
-    # store background state
-    with open('background.pkl', 'wb') as f:
-        pickle.dump(initial_state_bk, f)
-
 # DA test
 def DA_test(DA):
-    xa_start = DA.four_dims_var_optimizer(initial_state[:,0,0],B_perturb,observation[:,:,0,0],R,obs_idx,n,Dh,h,max_iter=1000,tol=1e-7)
+    nm = 1; nc = 20
+    xa_start = DA.four_dims_var_optimizer(initial_state[:,nm,nc],B_perturb,observation[:,:,nm,nc],R,obs_idx,n,Dh,h,max_iter=1000,tol=1e-7)
     xa = np.zeros((K,nt+1))
     xa[:,0] = xa_start.copy()
     for i in range(nt):
         xa[:,i+1] = runge_kuta4(l96,xa[:,i],dt)
 
-    xb_start = initial_state[:,0,0]
+    xb_start = initial_state[:,nm,nc]
     xb = np.zeros((K,nt+1))
     xb[:,0] = xb_start.copy()
     for i in range(nt):

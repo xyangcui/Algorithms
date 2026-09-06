@@ -258,6 +258,20 @@ class FourDVar_practical:
         self.RK4 = rk4
         self.rk4_adm = rk4_adm
 
+    def _check_inputs(self, xb, B, y, R, idx, N):
+        idx = np.asarray(idx, dtype=int)
+        if idx.ndim != 1:
+            raise ValueError("idx must be a 1-D array of model-step observation indices")
+        if len(idx) != y.shape[1]:
+            raise ValueError(f"len(idx)={len(idx)} but y has {y.shape[1]} observation times")
+        if len(idx) and (idx.min() < 0 or idx.max() >= N):
+            raise ValueError(f"observation indices {idx} must lie in [0, {N-1}]")
+        if B.shape != (xb.size, xb.size):
+            raise ValueError("B has incompatible shape")
+        if R.shape != (y.shape[0], y.shape[0]):
+            raise ValueError("R has incompatible shape")
+        return idx
+
     # cost function
     def cost_function(self,x,xb,B,R_inv,idx,y,h,N):
         '''
@@ -345,28 +359,37 @@ class FourDVar_practical:
           r: increment. a vector
       '''
         # loop-1: reverse traversal.
-        q = -grad; alpha_list = []
-        for i in reversed(range(len(s_list))):
-            s = s_list[i]
-            y = y_list[i]
-            rho = 1.0 / np.dot(y.T, s)
-            alpha = rho*np.dot(s.T,q)
-            q -= alpha*y
+        q = -grad.copy()
+        alpha_list = []
+        rho_list = []
+
+        for s, yv in zip(reversed(s_list), reversed(y_list)):
+            sy = float(np.dot(s, yv))
+            if sy <= 1e-14:
+                continue
+            rho = 1.0 / sy
+            alpha = rho * np.dot(s, q)
+            q -= alpha * yv
             alpha_list.append(alpha)
-        # loop-2: traversal.
+            rho_list.append(rho)
+
         if len(s_list) == 0:
-            gamma = 1.
-        else: 
-            gamma = np.dot(s_list[-1].T, y_list[-1]) / np.dot(y_list[-1].T, y_list[-1])
+            gamma = 1.0
+        else:
+            s = s_list[-1]
+            yv = y_list[-1]
+            yy = float(np.dot(yv, yv))
+            sy = float(np.dot(s, yv))
+            gamma = sy / yy if (sy > 1e-14 and yy > 1e-14) else 1.0
+
         r = gamma * q
 
-        for i in range(len(s_list)):
-            s = s_list[i]
-            y = y_list[i]
-            rho = 1.0 / np.dot(y.T, s)       
-            beta = rho * np.dot(y.T, r)
-            r += (alpha_list[-(i+1)] - beta) * s
-
+        valid_pairs = [(s, yv) for s, yv in zip(s_list, y_list) if np.dot(s, yv) > 1e-14]
+        for k, (s, yv) in enumerate(valid_pairs):
+            rho = 1.0 / np.dot(s, yv)
+            beta = rho * np.dot(yv, r)
+            alpha = alpha_list[-(k + 1)]
+            r += (alpha - beta) * s
         return r
 
     # executive function.
