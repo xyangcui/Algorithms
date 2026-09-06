@@ -25,21 +25,20 @@ for k in range(int(100/dt)):
 # formal integration
 X = np.zeros((K,nt+1),dtype=np.float64)
 X[:,0] = x0
-
 for j in range(nt):
     X[:,j+1] = runge_kuta4(lambda x: L96(x,F),X[:,j],dt)
-# create psedo observation.
-obs_std = 1.5  # observation-error standard deviation
-np.random.seed(42)   # for reproducibility
-obs_noise = np.random.normal(loc=0.0,scale=obs_std,size=X.shape)
-Y = X + obs_noise
-
-# observation matrix
-R = np.eye(K) * obs_std*obs_std
 # background matrix
 B = np.cov(X)
+reg_param = 1e-6 * np.trace(B) / K
+B += reg_param * np.eye(K)
+# create psedo observation.
+# observation matrix
+R = np.diag(0.35 * np.diag(B))
+np.random.seed(42)   # for reproducibility
+obs_noise = np.random.multivariate_normal(mean=np.zeros(K),cov=R,size=X.shape[1])
+Y = X + obs_noise.T
 
-data = {'real': X, 'B': B, 'obs_std': obs_std, 'obs': Y, 'R': R}
+data = {'real': X, 'B': B, 'obs': Y, 'R': R}
 
 # store value
 with open('database.pkl', 'wb') as f:

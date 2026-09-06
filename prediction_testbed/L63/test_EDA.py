@@ -23,7 +23,6 @@ nt   = int(tmax/dt)
 bg_coeff = 0.5  # use bg_coeff*B to perturb true value
 tof  = 200   # time of forecast
 nmember = 50   # number of members
-obs_coeff = 0.1   # use (1+obs_coeff)*R to perturb observation
 DA_dt     = 0.005   # dt of DA. propagate slowly to include small dynamics
 DA_window = 0.15 # length of DA window 0.2tu.
 # load ture value and observation
@@ -77,6 +76,7 @@ for icase, idx in enumerate(forecast_idx):
     x_truth[:,0] = real[:, idx].copy()
     for iobs in range(nobs*2-1):
         x_truth[:,iobs+1] = runge_kuta4(lambda x: L96(x,F),x_truth[:,iobs],DA_dt)
+    
     ## psedo observation
     obs_error = rng.multivariate_normal(mean=np.zeros(K),cov=R,size=nobs)
     y = x_truth[:,1::2] + obs_error.T
@@ -85,7 +85,7 @@ for icase, idx in enumerate(forecast_idx):
     # nmember perturbed observations
     # ==============================================
     obs_perturb = rng.multivariate_normal(mean=np.zeros(K),cov=R_perturb,size=(nmember,nobs)).T
-    observation[:, :, 1:, icase] = y[:, :, None] + obs_perturb
+    observation[:, :, 1:, icase] = y[:, :, None] #+ obs_perturb
 
 print(initial_state.shape) # (3, 101, 200) (dim,nmember,ncase)
 print(observation.shape) # (3, 10, 101, 200) (dim,windows,nmember,ncase)
@@ -103,7 +103,7 @@ def start_EDA():
 
     for ncase in range(tof):
         for nm in range(nmember+1):
-            initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer(initial_state[:,nm,ncase],B_perturb,
+            initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer(initial_state[:,nm,ncase],B,
                                                                       observation[:,:,nm,ncase],R,obs_idx,n,
                                                                        Dh,h,max_iter=1000,tol=1e-7)
     # store EDA
@@ -119,4 +119,112 @@ def start_EDA():
     with open('background.pkl', 'wb') as f:
         pickle.dump(initial_state_bk, f)
 
-start_EDA()
+# DA test
+def DA_test(DA):
+    xa_start = DA.four_dims_var_optimizer(initial_state[:,0,0],B_perturb,observation[:,:,0,0],R,obs_idx,n,Dh,h,max_iter=1000,tol=1e-7)
+    xa = np.zeros((K,nt+1))
+    xa[:,0] = xa_start.copy()
+    for i in range(nt):
+        xa[:,i+1] = runge_kuta4(l96,xa[:,i],dt)
+
+    xb_start = initial_state[:,0,0]
+    xb = np.zeros((K,nt+1))
+    xb[:,0] = xb_start.copy()
+    for i in range(nt):
+        xb[:,i+1] = runge_kuta4(l96,xb[:,i],dt)
+
+    x_truth = real[:,forecast_idx[0]:forecast_idx[0]+nt+1]
+
+    RMSEb = np.linalg.norm(xb-x_truth,axis=1)
+    RMSEa = np.linalg.norm(xa-x_truth,axis=1)
+
+    print(f"background: {RMSEb.mean()}")
+    print(f"analysis: {RMSEa.mean()}")
+
+
+def taylor_test_4dvar(fourdvar,x,xb,B,y,R,idx,H,h,N,seed=42):
+    """
+    Taylor test for FourDVar_practical gradient.
+
+    Check:
+        J(x + eps*d)
+        = J(x) + eps * gradJ(x)^T d + O(eps^2)
+
+    If gradient is correct:
+        first-order residual ~ O(eps^2)
+    """
+
+    rng = np.random.default_rng(seed)
+
+    # --------------------------------------------------
+    # Random normalized perturbation direction
+    # --------------------------------------------------
+    d = rng.normal(size=x.shape)
+    d /= np.linalg.norm(d)
+
+    # --------------------------------------------------
+    # R inverse
+    # Important: use full R if R is not diagonal
+    # --------------------------------------------------
+    R_inv = np.linalg.inv(R)
+
+    # --------------------------------------------------
+    # Base cost and gradient
+    # --------------------------------------------------
+    J0 = fourdvar.cost_function(x,xb,B,R_inv,idx,y,h,N)
+
+    grad = fourdvar.gradient(x,xb,B,y,R_inv,idx,H,h,N)
+
+    directional_grad = np.dot(grad, d)
+
+    print("J(x) =", J0)
+    print("||grad|| =", np.linalg.norm(grad))
+    print("grad^T d =", directional_grad)
+    print()
+
+    print(
+        f"{'eps':>12s} "
+        f"{'|J(x+ed)-J(x)|':>20s} "
+        f"{'Taylor residual':>20s} "
+        f"{'ratio':>12s}"
+    )
+
+    previous = None
+
+    eps_list = 10.0 ** (-np.arange(1, 9))
+
+    residuals = []
+
+    for eps in eps_list:
+
+        x_eps = x + eps * d
+
+        J_eps = fourdvar.cost_function(x_eps,xb,B,R_inv,idx,y,h,N)
+        # zeroth-order difference
+        diff0 = abs(J_eps - J0)
+
+        # first-order Taylor residual
+        residual = abs(J_eps- J0- eps * directional_grad)
+
+        residuals.append(residual)
+
+        if previous is None:
+            ratio = np.nan
+        else:
+            ratio = previous / residual
+
+        print(
+            f"{eps:12.1e} "
+            f"{diff0:20.8e} "
+            f"{residual:20.8e} "
+            f"{ratio:12.4f}"
+        )
+
+        previous = residual
+
+    return eps_list, np.array(residuals)
+
+#x_test = initial_state[:,0,0].copy()
+#eps_list, residuals = taylor_test_4dvar(fourdvar=DA_module,x=x_test,xb=initial_state[:,0,0],B=B,y=y,R=R,idx=obs_idx,H=Dh,h=h,N=n)
+
+DA_test(DA_module)

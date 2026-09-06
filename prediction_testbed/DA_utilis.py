@@ -259,20 +259,21 @@ class FourDVar_practical:
         self.rk4_adm = rk4_adm
 
     # cost function
-    def cost_function(self,x,xb,B_inv,R_inv,y,h,N):
+    def cost_function(self,x,xb,B,R_inv,idx,y,h,N):
         '''
           cost function of 4DVar
           type: J = 0.5*prior_error + 0.5*measure_error
           Input
              x: current state    (ndim)
             xb: prior state      (ndim)  
-            B_inv: inversed background covariance matrix (ndim,ndim)
+             B: background covariance matrix (ndim,ndim)
              y: measurement / observation
              h: operational function h(x)
-             N: time steps in an assimilation window
+             N: time steps in an assimilation window.
           Output
              value of cost.
         '''
+        from scipy.linalg import solve
         K = len(x)  # number of dims
         # step1: get values in an assimilation window
         x_traj = np.zeros((K,N)); x_traj[:,0] = x
@@ -280,23 +281,23 @@ class FourDVar_practical:
             x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
         # step2: get value of prior error
         dx = x - xb
-        Jb = dx.T @ B_inv @ dx
+        Jb = dx.T @ solve(B, dx)
         # step3: get value of measurement error
         Jo = 0.0
-        for i in range(N):
-            innovation = y[:, i] - h(x_traj[:, i],K)
+        for j, i in enumerate(idx):
+            innovation = y[:, j] - h(x_traj[:, i],K)
             Jo += innovation.T @ R_inv @ innovation
             
         return Jb + Jo
 
     # gradient for optimization.
-    def gradient(self,x, xb, B_inv, y, R_inv, H, h, N):
+    def gradient(self,x, xb, B, y, R_inv, idx, H, h, N):
         '''
           adjoint-based method to calculate gradient.
           Input
             x: recent state.
             xb: background state.
-            B_inv: inverted background covariance matrix
+            B:  background covariance matrix
             y: observation
             R_inv: observational covar
             H: observational operator
@@ -305,7 +306,9 @@ class FourDVar_practical:
           Output
             gradient dimensions like x.
         '''
+        from scipy.linalg import solve
         K = len(x)  #number of dim
+        obs_map = {step: j for j, step in enumerate(idx)}
         # step1: get values in an assimilation window.
         x_traj = np.zeros((K,N)); x_traj[:,0] = x
         for i in range(N-1):
@@ -314,14 +317,16 @@ class FourDVar_practical:
         x_adj = np.zeros(K)
         for i in range(N-1, -1, -1):
             # step 1: calc forcing.
-            forcing = H(x_traj[:,i],K).T @ R_inv @ (y[:,i] - h(x_traj[:,i],K))
-            x_adj = x_adj + forcing
-            if i>0:
+            if i in obs_map:
+                j = obs_map[i]
+                forcing = H(x_traj[:,i],K).T @ R_inv @ (y[:,j] - h(x_traj[:,i],K))
+                x_adj = x_adj + forcing
+            if i > 0:
                 # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
                 x_adj = self.rk4_adm(self.model_ADM,self.model,x_traj[:,i-1],x_adj)
         grad_Jo = -2 * x_adj
         #step3: get gradient of background.
-        grad_Jb = 2* B_inv @ (x-xb)
+        grad_Jb = 2 * solve(B, x-xb)
 
         return grad_Jb + grad_Jo
 
@@ -365,7 +370,7 @@ class FourDVar_practical:
         return r
 
     # executive function.
-    def four_dims_var_optimizer(self,xb,B,y,R,H,h,max_iter,tol):
+    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,max_iter,tol,verbose=True):
         '''
         iteration for it. main procedure
         Input
@@ -373,27 +378,28 @@ class FourDVar_practical:
             B:  background covariance martrix [ndim,ndim]
             y:  real obs.                     [nobs,nstep]
             R:  obs covariance,               [nobs,nstep]
+          idx:  index of observation,         [nobs]
             H:  obs operator.                 [nobs,nstep]
             h:  obs function.
           tol:  tolerance of gradient
         Output
             xa: analysis value.               [ndim,]
         '''
-        # dimensions
-        K = xb.shape[0]   # state dim
-        m = y.shape[0]    # obs dim
-        n = y.shape[1]    # obs number
-
-        # invert R and B.
-        R_inv = np.linalg.inv(R); B_inv = np.linalg.inv(B)
-
+        # invert R
+        R_inv = np.diag(1./np.diag(R))
         # iteration. (x0 newest; xb the old one)
         x_old = xb
         s_list = []
         y_list = []
+        # create two lists to store gradient and cost.
+        grad_list = []
+        cost_list = []
 
-        grad_old = self.gradient(x_old, xb, B_inv, y, R_inv, H, h, n)
-        cost_old = self.cost_function(x_old, xb, B_inv, R_inv, y, h, n)
+        grad_old = self.gradient(x_old, xb, B, y, R_inv, idx, H, h, n)
+        cost_old = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n)
+
+        grad_list.append(grad_old)
+        cost_list.append(cost_old)
 
         for iterate in range(max_iter):
         
@@ -403,14 +409,14 @@ class FourDVar_practical:
             # line search
             alpha = 1.0
             x_new = x_old + alpha*d                          
-            cost_new = self.cost_function(x_new, xb, B_inv, R_inv, y, h, n)
+            cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n)
 
             while (cost_new > cost_old+1e-4*alpha*np.dot(grad_old.T,d)) & (alpha > 0.1):
                 alpha *= 0.5
                 x_new = x_old + alpha*d                  
-                cost_new = self.cost_function(x_new, xb, B_inv, R_inv, y, h, n)
+                cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n)
 
-            grad_new = self.gradient(x_new, xb, B_inv, y, R_inv, H, h, n)
+            grad_new = self.gradient(x_new, xb, B, y, R_inv, idx, H, h, n)
 
             s_list.append(x_new-x_old)
             y_list.append(grad_new-grad_old)
@@ -424,13 +430,19 @@ class FourDVar_practical:
             grad_old = grad_new
             cost_old = cost_new
 
+            grad_list.append(grad_old)
+            cost_list.append(cost_old)
+
             # judgement
             if np.linalg.norm(grad_old) < tol:
                 break
 
-        print(f'total times: {iterate+1}')
-        print(f'grads norm: {np.linalg.norm(grad_old)}')
-        print(f'final cost: {cost_old}')
+        if verbose:
+            print(f'total times: {iterate+1}')
+            print(f'grads norm: {np.linalg.norm(grad_old)}')
+            print(f'initial cost: {cost_list[0]}')
+            print(f'final cost: {cost_old}')
+
         return x_old
 # 3DVar
 

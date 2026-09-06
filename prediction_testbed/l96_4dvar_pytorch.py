@@ -6,8 +6,10 @@ import torch
 # ============================================================
 # Configuration
 # ============================================================
-DTYPE = torch.float64
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.backends.mps.is_available():
+    print("✅ MPS 设备可用！")
+DTYPE = torch.float32
+DEVICE = torch.device("mps" if torch.cuda.is_available() else "cpu")
 
 K = 40
 F = 8.0

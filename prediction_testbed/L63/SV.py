@@ -112,10 +112,12 @@ def test_adjoint(zt, N, dt, F=8.0, num_tests=5, eps=1e-6, tol=1e-6):
     print("所有测试通过！你的 ADM 实现正确。")
 
 
-sv_t  = 1.  # 1 tu
-sv_dt = 0.1 # 0.1 tu
+sv_t  = 0.4  # 0.4 tu
+sv_dt = 0.01 # 0.1 tu
 icase = 0
-sv = singular_vectors(m=K, 
+sv = np.zeros((nmember-1,K,ncase))
+for i in range(ncase):
+    sv[:,:,i] = singular_vectors(m=K, 
                       nsv=10, 
                       scale=3, 
                       tol=1e-10, 
