@@ -143,16 +143,16 @@ def lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol):
 
     return Q, T
 
-def gaussian_sampling(SV_scaled, gamma, nmember, nsv):
+def gaussian_sampling(SV_scaled, beta, nmember, nsv):
     '''sampling parameters to linearly combine SVs'''
     from scipy.stats import truncnorm
-    # 1. norm
-    sv_norm = np.linalg.norm(SV_scaled,axis=0,keepdims=False)
-    beta = gamma / sv_norm.mean()
-    # 3. sampling [n,nsv]
-    return truncnorm.rvs(-3,3,loc=0.,scale=beta,size=(nmember,nsv))
+    # 1. sampling [n,nsv]
+    alpha = truncnorm.rvs(-3,3,loc=0.,scale=1.,size=(nmember,nsv))
+    # 2. linearly combine
+    perturbation = beta*alpha@SV_scaled.T
+    return perturbation
 
-def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,Pa,rescale):
+def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,Da,rescale):
     '''
       singular vectors.
       Input
@@ -170,6 +170,7 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,P
     '''
     from numpy.linalg import svd
     import numpy as np
+    from math import sqrt
 
     K  = len(x2)
     # TLM jacobi
@@ -182,15 +183,20 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,P
     # SVD analysis
     _,_,Vh = svd(ADM@TLM,full_matrices=True)
     SV = Vh[:nsv,:].T
-    SV_scaled = SV @ Pa[:,None]
-    # sampling
-    ## use analyze error covariance to decide parameters
-    Alpha_half = gaussian_sampling(SV_scaled,rescale,nmember//2,nsv)
-    Alpha = np.concatenate([Alpha_half, -Alpha_half],axis=0)      
+    ## rescale and project to ensemble space
+    M,N = Da.shape
+    SV_scaled = sqrt(N-1)*Da.T@SV
+    # 4. generate members
+    ## use analyze error covariance to decide parameters [nmember//2,N]
+    perturbation_half = gaussian_sampling(SV_scaled,rescale,nmember//2,nsv)
+    ## back to physical space [m, nmember//2]
+    perturbation_half_phy = Da@perturbation_half.T
+    ## To ensure that the ensemble is centered on the analysis, a plus–minus symmetry is adopted
+    perturbations = np.concatenate([perturbation_half_phy, -perturbation_half_phy],axis=1)
+    
+    return perturbations.T
 
-    return Alpha@SV.T
-
-def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Pa,rescale,verbos=False):
+def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verbos=False):
     '''
     use lanczos method to get nsv singular vectors and get a ensemble.
     Input
@@ -204,12 +210,14 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Pa,rescale,verbos=F
       TLM: function to integrate TLM. (only needs input as self-variable)
       ADM: function to integrate ADM, (like TLM)
       nmember: the number of member
-      Pa: analyze error variance vector
+      Da[space,member]: analyze error matrix
       rescale: an emperical parameter to rescale for more precise ensemble spread.
+                default is 0.5. If the ensemble is too disperse, adjust it smaller.
     Output
       ensemble[nmember,m]: a ensemble of forecast members
     '''
     import numpy as np
+    from math import sqrt
     n = min(m, int(nsv * scale))
     # 1. lanczos iteration (project to Krylov subspace)
     Q, T = lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol)
@@ -262,15 +270,23 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Pa,rescale,verbos=F
     eigenvalues = eigenvalues[idx]
     eigenvectors = eigenvectors[:, idx]
     # 3. get Ritz vectors
+    ## back to physical space
     minimal_n = min(len(eigenvalues),nsv)
     SV = np.matmul(Q, eigenvectors)[:,:minimal_n]/ np.sqrt(r0[:, None])
-    SV_scaled = SV * Pa[:, None]
+    ## normalization
+    SV = SV / np.linalg.norm(SV,axis=0,keepdims=True)
+    ## rescale and project to ensemble space
+    M,N = Da.shape
+    SV_scaled = sqrt(N-1)*Da.T@SV
     # 4. generate members
-    ## use analyze error covariance to decide parameters [nmember,nsv]
-    Alpha_half = gaussian_sampling(SV_scaled,rescale,nmember//2,minimal_n)
-    Alpha = np.concatenate([Alpha_half, -Alpha_half],axis=0)
+    ## use analyze error covariance to decide parameters [nmember//2,N]
+    perturbation_half = gaussian_sampling(SV_scaled,rescale,nmember//2,minimal_n)
+    ## back to physical space [m, nmember//2]
+    perturbation_half_phy = Da@perturbation_half.T
+    ## To ensure that the ensemble is centered on the analysis, a plus–minus symmetry is adopted
+    perturbations = np.concatenate([perturbation_half_phy, -perturbation_half_phy],axis=1)
     
-    return Alpha@SV_scaled.T
+    return perturbations.T
 
 
 # type-3: Nonlinear Lyapunov Vectors (NLLVs)

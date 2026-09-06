@@ -32,10 +32,8 @@ with open('ensembleDA.pkl', 'rb') as f:
     initial_state = pickle.load(f)
 _,nmember,ncase = initial_state.shape
 # estimate analysis error vector.
-AnVar = np.zeros((K,ncase),dtype=np.float64)
-for icase in range(ncase):
-    temp = initial_state[:,1:,icase]
-    AnVar[:,icase] = np.std(temp,axis=1,ddof=1)
+subset = initial_state[:, 1:, :]   # [K, nmember-1, ncase]
+Da = subset - subset.mean(axis=1, keepdims=True)
 # projection matrix, currently set to identified matrix.
 P = np.eye(K)
 # a function to calculate total energy metrics.
@@ -114,7 +112,6 @@ def test_adjoint(zt, N, dt, F=8.0, num_tests=5, eps=1e-6, tol=1e-6):
     print("所有测试通过！你的 ADM 实现正确。")
 
 
-
 sv_t  = 1.  # 1 tu
 sv_dt = 0.1 # 0.1 tu
 icase = 0
@@ -128,5 +125,5 @@ sv = singular_vectors(m=K,
                       TLM = lambda x: TLM(x,initial_state[:,0,icase],int(sv_t/sv_dt),sv_dt),
                       ADM = lambda x: ADM(x,initial_state[:,0,icase],int(sv_t/sv_dt),sv_dt),
                       nmember=50,
-                      Pa=AnVar[:,icase],
-                      rescale=1.)
+                      Da=Da[:,:,icase],
+                      rescale=0.5)
