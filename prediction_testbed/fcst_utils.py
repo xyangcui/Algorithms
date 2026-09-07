@@ -187,7 +187,7 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,D
     M,N = Da.shape
     SV_scaled = sqrt(N-1)*Da.T@SV
     # 4. generate members
-    ## use analyze error covariance to decide parameters [nmember//2,N]
+    ## randomly generate it [nmember//2,N]
     perturbation_half = gaussian_sampling(SV_scaled,rescale,nmember//2,nsv)
     ## back to physical space [m, nmember//2]
     perturbation_half_phy = Da@perturbation_half.T
@@ -196,9 +196,18 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,D
     
     return perturbations.T
 
-def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verbos=False):
+def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verbose=False):
     '''
-    use lanczos method to get nsv singular vectors and get a ensemble.
+    use lanczos method to obtain a forecast ensemble.
+
+    Procedure
+       Firstly, project to Krylov subspace, the number of dimension is typically min(m, nsv*scale).
+       Secondly, SVD triangular matrix T to estimate eighs.
+       Then, scale singular vectors to analysis error.
+       Finally, linearly combine these singular vectors to generate a forecast ensemble.
+
+    Reference
+
     Input
       m: length of space.
       nsv: the number of singular vectors
@@ -213,6 +222,7 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
       Da[space,member]: analyze error matrix
       rescale: an emperical parameter to rescale for more precise ensemble spread.
                 default is 0.5. If the ensemble is too disperse, adjust it smaller.
+
     Output
       ensemble[nmember,m]: a ensemble of forecast members
     '''
@@ -221,7 +231,7 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
     n = min(m, int(nsv * scale))
     # 1. lanczos iteration (project to Krylov subspace)
     Q, T = lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol)
-    if verbos is True:
+    if verbose is True:
         AQ = np.column_stack([propagator(Q[:, j],P,r0,rf,TLM,ADM) for j in range(Q.shape[1])])
         T_exact = Q.T @ AQ
         print("T symmetry =:", np.max(np.abs(T - T.T)))
@@ -276,18 +286,54 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
     ## normalization
     SV = SV / np.linalg.norm(SV,axis=0,keepdims=True)
     ## rescale and project to ensemble space
-    M,N = Da.shape
+    _,N = Da.shape
     SV_scaled = sqrt(N-1)*Da.T@SV
     # 4. generate members
-    ## use analyze error covariance to decide parameters [nmember//2,N]
-    perturbation_half = gaussian_sampling(SV_scaled,rescale,nmember//2,minimal_n)
-    ## back to physical space [m, nmember//2]
-    perturbation_half_phy = Da@perturbation_half.T
-    ## To ensure that the ensemble is centered on the analysis, a plus–minus symmetry is adopted
-    perturbations = np.concatenate([perturbation_half_phy, -perturbation_half_phy],axis=1)
-    
-    return perturbations.T
+    ## use analyze error covariance to decide parameters [nmember,N]
+    perturbation = gaussian_sampling(SV_scaled,rescale,nmember,minimal_n)
+    ## back to physical space [m, nmember]
+    perturbation_phy = Da@perturbation.T
 
+    return perturbation_phy
+
+## second-order exact sampling (SOES)
+def construct_constrained_matrix(n):
+    '''Householder transformations'''
+    from math import sqrt
+    from scipy.stats import ortho_group
+    # define a vector
+    u = np.full(n,1/sqrt(n))
+    # project a base vector to direction u.
+    v = np.zeros(n); v[0] = 1
+    v = v - u
+    # get householder matrix
+    H = np.eye(n) - 2*(v@v.T)/(v.T@v)
+    # random rotation
+    R = ortho_group.rvs(dim=n-1)
+    # rotate the matrix H
+    return H[:,:n-1]@R
+
+def SOES_vectors(base, nmember):
+    '''
+    Its perturbations precisely keep the first two moments: mean and variance.
+    Input
+      base[ndim, nsample]: historical records of forecast. analysis error
+      nmember: the number of forecast member.
+    Ouput
+      Omega[nmember, ndim]: a ensemble of n members.
+    '''
+    from numpy.linalg import svd
+    from math import sqrt
+    # 1. calculate anomaly
+    # 2. SVD anomalous field to get direction and singular values.
+    U, Sigma, _ = svd(base)
+    # 3. key: construct a constrained random orthogonal matrix. (fullfill the two-order condition)
+    Omega = construct_constrained_matrix(nmember) # [nmember, nmember-1]
+    # 4. cut off U and Sigma to nmember and restore with Omega.
+    Uc = U[:,:nmember-1]; Sigmac = Sigma[:nmember-1,:nmember-1]
+    Omega = Uc@Sigmac@Omega.T
+
+    return sqrt(nmember-1)*Omega
 
 # type-3: Nonlinear Lyapunov Vectors (NLLVs)
 def NLL_vectors(x2,B,N1,N2,M_update,rescaled_dt=0.2,breeding_length=2):
@@ -350,42 +396,3 @@ def NLL_vectors(x2,B,N1,N2,M_update,rescaled_dt=0.2,breeding_length=2):
         rms_breeding[k+1,:] = delta_rms    
 
     return delta[:N2,:]
-
-## second-order exact sampling (SOES)
-def construct_constrained_matrix(n):
-    '''Householder transformations'''
-    from math import sqrt
-    from scipy.stats import ortho_group
-    # define a vector
-    u = np.full(n,1/sqrt(n))
-    # project a base vector to direction u.
-    v = np.zeros(n); v[0] = 1
-    v = v - u
-    # get householder matrix
-    H = np.eye(n) - 2*(v@v.T)/(v.T@v)
-    # random rotation
-    R = ortho_group.rvs(dim=n-1)
-    # rotate the matrix H
-    return H[:,:n-1]@R
-
-def SOES_vectors(base, nmember):
-    '''
-    Its perturbations precisely keep the first two moments: mean and variance.
-    Input
-      base[ndim, nsample]: historical records of forecast. analysis error
-      nmember: the number of forecast member.
-    Ouput
-      Omega[nmember, ndim]: a ensemble of n members.
-    '''
-    from numpy.linalg import svd
-    from math import sqrt
-    # 1. calculate anomaly
-    # 2. SVD anomalous field to get direction and singular values.
-    U, Sigma, _ = svd(base)
-    # 3. key: construct a constrained random orthogonal matrix. (fullfill the two-order condition)
-    Omega = construct_constrained_matrix(nmember) # [nmember, nmember-1]
-    # 4. cut off U and Sigma to nmember and restore with Omega.
-    Uc = U[:,:nmember-1]; Sigmac = Sigma[:nmember-1,:nmember-1]
-    Omega = Uc@Sigmac@Omega.T
-
-    return sqrt(nmember-1)*Omega

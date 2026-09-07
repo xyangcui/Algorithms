@@ -111,30 +111,32 @@ n = int(DA_window/DA_dt)
 def start_EDA():
 
     for ncase in range(tof):
+        print(f'case {ncase} begin.')
         for nm in range(nmember+1):
             if nm == 0:
                 Bda = B_control; Rda = R_control
             else:
                 Bda = B_perturb; Rda = R_perturb
             ## step1: optimize at the start of an assimilation window.
-            #initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer_scipy(xb=initial_state[:,nm,ncase],
-            #                                                                    B=Bda,
-            #                                                                    y=observation[:,:,nm,ncase],
-            #                                                                    R=Rda,
-            #                                                                    idx=obs_idx,
-            #                                                                    n=n,
-            #                                                                    H=Dh,
-            #                                                                    h=h,
-            #                                                                    max_iter=1000,
-            #                                                                    tol=1e-5,
-            #                                                                    verbose=True,
-            #                                                                    return_history=False)
-            ## integrate to the end of an assimilation window.
-            #for i in range(n):
-            #    initial_state[:,nm,ncase] = runge_kuta4(lambda x: L96(x,F),initial_state[:,nm,ncase],DA_dt)
+            initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer_scipy(xb=initial_state[:,nm,ncase],
+                                                                                B=Bda,
+                                                                                y=observation[:,:,nm,ncase],
+                                                                                R=Rda,
+                                                                                idx=obs_idx,
+                                                                                n=n,
+                                                                                H=Dh,
+                                                                                h=h,
+                                                                                max_iter=1000,
+                                                                                tol=1e-5,
+                                                                                verbose=False,
+                                                                                return_history=False)
+            ## step2: integrate to the end of an assimilation window.
+            for i in range(n):
+                initial_state[:,nm,ncase] = runge_kuta4(lambda x: L96(x,F),initial_state[:,nm,ncase],DA_dt)
+                initial_state_bk[:,nm,ncase] = runge_kuta4(lambda x: L96(x,F),initial_state_bk[:,nm,ncase],DA_dt)
     # store EDA
-    #with open('ensembleDA.pkl', 'wb') as f:
-    #    pickle.dump(initial_state, f)
+    with open('ensembleDA.pkl', 'wb') as f:
+        pickle.dump(initial_state, f)
     # store true trajectories
     x_truth = np.zeros((K,nt+1,tof),dtype=np.float64)
     for icase, idx in enumerate(forecast_idx):
@@ -147,7 +149,7 @@ def start_EDA():
     with open('forecast_truth.pkl', 'wb') as f:
         pickle.dump(x_truth, f)    
     # store background state
-    #with open('background.pkl', 'wb') as f:
-    #    pickle.dump(initial_state_bk, f)
+    with open('background.pkl', 'wb') as f:
+        pickle.dump(initial_state_bk, f)
 
 start_EDA()

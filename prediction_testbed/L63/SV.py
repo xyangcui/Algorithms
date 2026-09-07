@@ -58,69 +58,16 @@ def ADM(x,zt,N,dt):
         x = rk4_nl_adm(lambda x,y: L96_adm(x,y),lambda x: L96(x,F),zbase[:,i-1],x,dt)
     return x
 
-def test_adjoint(zt, N, dt, F=8.0, num_tests=5, eps=1e-6, tol=1e-6):
-    """
-    测试 ADM 函数的正确性（伴随关系验证）
-    
-    参数:
-        zt : 初始状态向量 (shape: K,)
-        N  : 积分步数
-        dt : 时间步长
-        F  : L96 的强迫项（若你的 L96 需要）
-        num_tests : 重复测试次数
-        eps : 有限差分扰动幅度
-        tol : 允许的误差容限
-    """
-    global K  # ADM 内部使用了全局 K，必须设置
-    K = len(zt)
-    
-    # 定义非线性模式和切线性模式（有限差分）
-    def nonlinear_forward(z0, steps):
-        """前向积分 N 步，返回轨迹 (K, steps+1)"""
-        traj = np.zeros((K, steps+1))
-        traj[:, 0] = z0
-        for i in range(steps):
-            traj[:, i+1] = runge_kuta4(lambda x: L96(x, F), traj[:, i], dt)
-        return traj
-    
-    for test_idx in range(num_tests):
-        # 1. 随机生成扰动和伴随向量
-        dx = np.random.randn(K)
-        dy = np.random.randn(K)
-        
-        # 2. 计算非线性轨迹（参考）
-        zbase = nonlinear_forward(zt, N)
-        
-        # 3. 计算 TLM(dx) 用有限差分
-        z_plus = nonlinear_forward(zt + eps * dx, N)
-        tlm_dx = (z_plus[:, -1] - zbase[:, -1]) / eps  # 终态扰动
-        
-        # 4. 计算伴随作用 ADM(dy)
-        # 注意：ADM 的输入 x 是伴随变量（dy），zt 用于获取轨迹，N, dt 同前
-        adm_dy = ADM(dy, zt, N, dt)   # 返回初始时刻的伴随变量
-        
-        # 5. 计算内积
-        inner1 = np.dot(tlm_dx, dy)      # <TLM(dx), dy>
-        inner2 = np.dot(dx, adm_dy)      # <dx, ADM(dy)>
-        
-        diff = np.abs(inner1 - inner2)
-        print(f"Test {test_idx+1}: <TLM,dy> = {inner1:.10f}, <dx,ADM> = {inner2:.10f}, diff = {diff:.2e}")
-        
-        # 6. 断言检查
-        assert diff < tol, f"伴随测试失败！差异 {diff} 超过容限 {tol}"
-    
-    print("所有测试通过！你的 ADM 实现正确。")
-
-
 sv_t  = 0.4  # 0.4 tu
 sv_dt = 0.01 # 0.1 tu
-icase = 0
-sv = np.zeros((nmember-1,K,ncase))
-for i in range(ncase):
-    sv[:,:,i] = singular_vectors(m=K, 
+
+sv = np.zeros((K,nmember,ncase))
+for icase in range(ncase):
+    print(f'case {icase+1} begin.')
+    sv[:,:,icase] = singular_vectors(m=K, 
                       nsv=10, 
                       scale=3, 
-                      tol=1e-10, 
+                      tol=1e-6, 
                       P=P, 
                       r0=total_energy_norm(K),
                       rf=total_energy_norm(K),
@@ -128,4 +75,7 @@ for i in range(ncase):
                       ADM = lambda x: ADM(x,initial_state[:,0,icase],int(sv_t/sv_dt),sv_dt),
                       nmember=50,
                       Da=Da[:,:,icase],
-                      rescale=0.5)
+                      rescale=0.45)
+## store
+with open ('singular_vectors.pkl',"wb") as f:
+    pickle.dump(sv,f)

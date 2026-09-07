@@ -99,4 +99,11 @@ else:
             for i in range(n):
                 initial_state[:,inumber,icase] = runge_kuta4(lambda x: L96(x,F),initial_state[:,inumber,icase],DA_dt)
     with open('ensembleDA_end_of_DAwindow.pkl', 'wb') as f:
-        pickle.dump(initial_state, f)  
+        pickle.dump(initial_state, f) 
+    ## integrate to the end of an assimilation window.
+    for icase in range(ncase):
+        for inumber in range(nmember):
+            for i in range(n):
+                initial_state_bk[:,inumber,icase] = runge_kuta4(lambda x: L96(x,F),initial_state_bk[:,inumber,icase],DA_dt)
+    with open('background.pkl', 'wb') as f:
+        pickle.dump(initial_state_bk, f)  

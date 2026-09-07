@@ -241,7 +241,17 @@ class FourDVar:
 class FourDVar_practical:
     '''
       strongly constrained(SC)-4DVar
-      an easy algorithm because prediction step must equal to observation's.
+      Note
+        1. It optimizes the solution at the beginning of an assimilation window.
+        2. After that, one integrates the model solution to the end of the assimilation window with the deterministic nonlinear model,
+          where the actual weather prediction starts.
+        3. problem: almost all DA methods that optimize the start if an assimilation window:
+              there is no guarantee that the solution will be the mode 
+                after propagation to the end of the assimilation window where we initialize the actual forecasts.
+      Procedures
+        cost function: calculate cost.
+        gradient func: calculate the gradient of cost function, currently use adjoint method. (may consider no adjoint method, like AutoDiff)
+        optimizer: currently consider L-BFGS (the limited-memory version of Newton method).
 
       Definitions
         model: state evolution function.
