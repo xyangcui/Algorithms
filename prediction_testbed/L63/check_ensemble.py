@@ -32,6 +32,7 @@ DA_window = 0.15 # length of DA window 0.2tu.
 # load ture value and observation
 with open('database.pkl', 'rb') as f:
     data = pickle.load(f)
+    real = data['real']
     obs  = data['obs']
     B    = data['B']
     R    = data['R']
@@ -41,7 +42,7 @@ with open('background.pkl', 'rb') as f:
 # load forecast ensemble [dim,ensemble,time]
 with open('ensembleDA.pkl', 'rb') as f:
     initial_state = pickle.load(f)
-
+# load forecast truth
 with open('forecast_truth.pkl', 'rb') as f:
     truth = pickle.load(f)
 
@@ -92,3 +93,10 @@ if initial_state.any() == np.nan:
         pickle.dump(initial_state, f) 
 else:
     print(f"All initial states are correct.")
+    ## integrate to the end of an assimilation window.
+    for icase in range(ncase):
+        for inumber in range(nmember):
+            for i in range(n):
+                initial_state[:,inumber,icase] = runge_kuta4(lambda x: L96(x,F),initial_state[:,inumber,icase],DA_dt)
+    with open('ensembleDA_end_of_DAwindow.pkl', 'wb') as f:
+        pickle.dump(initial_state, f)  

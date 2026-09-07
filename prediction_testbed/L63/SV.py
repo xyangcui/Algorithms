@@ -28,7 +28,7 @@ with open('database.pkl', 'rb') as f:
 with open('background.pkl', 'rb') as f:
     initial_state_bk = pickle.load(f)
 # load forecast ensemble [dim,ensemble,time]
-with open('ensembleDA.pkl', 'rb') as f:
+with open('ensembleDA_end_of_DAwindow.pkl', 'rb') as f:
     initial_state = pickle.load(f)
 _,nmember,ncase = initial_state.shape
 # estimate analysis error vector.

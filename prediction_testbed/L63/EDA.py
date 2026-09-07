@@ -116,7 +116,7 @@ def start_EDA():
                 Bda = B_control; Rda = R_control
             else:
                 Bda = B_perturb; Rda = R_perturb
-
+            ## step1: optimize at the start of an assimilation window.
             #initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer_scipy(xb=initial_state[:,nm,ncase],
             #                                                                    B=Bda,
             #                                                                    y=observation[:,:,nm,ncase],
@@ -129,13 +129,21 @@ def start_EDA():
             #                                                                    tol=1e-5,
             #                                                                    verbose=True,
             #                                                                    return_history=False)
+            ## integrate to the end of an assimilation window.
+            #for i in range(n):
+            #    initial_state[:,nm,ncase] = runge_kuta4(lambda x: L96(x,F),initial_state[:,nm,ncase],DA_dt)
     # store EDA
     #with open('ensembleDA.pkl', 'wb') as f:
     #    pickle.dump(initial_state, f)
     # store true trajectories
     x_truth = np.zeros((K,nt+1,tof),dtype=np.float64)
-    for i in range(tof):
-        x_truth[:,:,i] = real[:,i:i+nt+1]
+    for icase, idx in enumerate(forecast_idx):
+        start = real[:, idx]
+        for i in range(n):
+            start = runge_kuta4(lambda x: L96(x,F),start,DA_dt)
+        x_truth[:,0,icase] = start
+        for i in range(nt):
+            x_truth[:,i+1,icase] = runge_kuta4(lambda x: L96(x,F),x_truth[:,i,icase],DA_dt)
     with open('forecast_truth.pkl', 'wb') as f:
         pickle.dump(x_truth, f)    
     # store background state
