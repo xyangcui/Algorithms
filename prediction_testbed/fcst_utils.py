@@ -127,9 +127,8 @@ def lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol):
         #print(np.dot(w,Q[:,i]))
         # update
         if i < n-1:
-            beta[i] = np.linalg.norm(w)
+            beta[i] = np.linalg.norm(np.asarray(w))
             if beta[i] < tol:
-                Q[:, i+1] = w / beta[i] 
                 Q = Q[:,:i+1]
                 T = T[:i+1,:i+1]
                 print(f'step {i+1} converges, so cut off.')
@@ -232,7 +231,7 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
     # 1. lanczos iteration (project to Krylov subspace)
     Q, T = lanczos_iteration(m,n,P,r0,rf,TLM,ADM,tol)
     if verbose is True:
-        AQ = np.column_stack([propagator(Q[:, j],P,r0,rf,TLM,ADM) for j in range(Q.shape[1])])
+        AQ = np.column_stack([propagator(Q[:, j],P,np.sqrt(r0),rf,TLM,ADM) for j in range(Q.shape[1])])
         T_exact = Q.T @ AQ
         print("T symmetry =:", np.max(np.abs(T - T.T)))
         print("Q orth error =:", np.linalg.norm(Q.T @ Q - np.eye(Q.shape[1])))
@@ -244,8 +243,8 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
             np.linalg.norm(T_exact - np.diag(np.diag(T_exact))
                      - np.diag(np.diag(T_exact,1),1)
                      - np.diag(np.diag(T_exact,-1),-1)))
-        Ax1 = propagator(Q[:, 0],P,r0,rf,TLM,ADM)
-        Ax2 = propagator(Q[:, 0],P,r0,rf,TLM,ADM)
+        Ax1 = propagator(Q[:, 0],P,np.sqrt(r0),rf,TLM,ADM)
+        Ax2 = propagator(Q[:, 0],P,np.sqrt(r0),rf,TLM,ADM)
         print("A repeat =", np.linalg.norm(Ax1-Ax2))
         H = 0.5 * (T_exact + T_exact.T)
 

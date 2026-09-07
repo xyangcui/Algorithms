@@ -24,6 +24,7 @@ def adams_bashforth(zt, rhs, dt):
     _prhs  = rhs
     return newzt
 
+step = 0
 prhs_z, pprhs_z, prhs_dz, pprhs_dz  = 0., 0., 0., 0.  # previous two right hand sides
 def adams_bashforth_tlm(dzt, zt, rhsz, rhsdz, dt):
     """Take a single step forward in time using Adams-Bashforth 3."""
