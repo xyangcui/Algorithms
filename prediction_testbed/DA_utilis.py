@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.linalg import sqrtm, inv
+from scipy.linalg import inv
 
 # predicted measurement
 def h(x,m):
@@ -245,9 +245,9 @@ class FourDVar_practical:
 
       Definitions
         model: state evolution function.
-        model_TLM: tangent linear model. 
+        model_ADM: Adjoint model. 
         rk4: method, how to integrate.
-
+        rk4_adm: method, how to integrate ADM.
       Reference:
         https://www.ecmwf.int/en/elibrary/79860-data-assimilation-concepts-and-methods
     '''
@@ -273,7 +273,7 @@ class FourDVar_practical:
         return idx
 
     # cost function
-    def cost_function(self,x,xb,B,R_inv,idx,y,h,N):
+    def cost_function(self,x,xb,B,R_inv,idx,y,h,N,return_results=False):
         '''
           cost function of 4DVar
           type: J = 0.5*prior_error + 0.5*measure_error
@@ -301,8 +301,10 @@ class FourDVar_practical:
         for j, i in enumerate(idx):
             innovation = y[:, j] - h(x_traj[:, i],K)
             Jo += innovation.T @ R_inv @ innovation
-            
-        return Jb + Jo
+        if return_results:
+            return Jb, Jo
+        else:
+            return Jb + Jo
 
     # gradient for optimization.
     def gradient(self,x, xb, B, y, R_inv, idx, H, h, N):
@@ -393,7 +395,7 @@ class FourDVar_practical:
         return r
 
     # executive function.
-    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,max_iter,tol,verbose=True):
+    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,max_iter=200,tol=1e-7,verbose=True, return_history=False):
         '''
         iteration for it. main procedure
         Input
@@ -402,12 +404,17 @@ class FourDVar_practical:
             y:  real obs.                     [nobs,nstep]
             R:  obs covariance,               [nobs,nstep]
           idx:  index of observation,         [nobs]
+            n:  time of integration.
             H:  obs operator.                 [nobs,nstep]
-            h:  obs function.
-          tol:  tolerance of gradient
+            h:  obs function. 
+        max_iter: maximum steps of iteration.
+          tol:  tolerance of gradient. default is 1e-7.
+        verbose: output check information.
+        return_history: output is xa and history (gradient and cost)
         Output
             xa: analysis value.               [ndim,]
         '''
+        memory = 10
         # invert R
         R_inv = np.diag(1./np.diag(R))
         # iteration. (x0 newest; xb the old one)
@@ -456,7 +463,7 @@ class FourDVar_practical:
             if sy > 1e-12 * max(1.0, np.linalg.norm(s) * np.linalg.norm(yv)):
                 s_list.append(s)
                 y_list.append(yv)
-                if len(s_list) > 10:
+                if len(s_list) > memory:
                     s_list.pop(0)
                     y_list.pop(0)
 
@@ -469,26 +476,30 @@ class FourDVar_practical:
             cost_list.append(cost_old)
 
         if verbose:
+            Jb, Jo = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n)
             print(f'total times: {iterate+1}')
             print(f'grads norm: {np.linalg.norm(grad_old)}')
             print(f'initial cost: {cost_list[0]}')
             print(f'final cost: {cost_old}')
-
-        return x_old
+            print(f'Jb: {Jb}  Jo: {Jo}')
+        if return_history:
+            return grad_list, cost_list, x_old
+        else:
+            return x_old
 
     def four_dims_var_optimizer_scipy(
         self, xb, B, y, R, idx, n, H, h, max_iter=200, tol=1e-7,
-        verbose=True, return_result=False
+        verbose=True, return_history=False
     ):
         """Robust L-BFGS-B optimizer using the analytic adjoint gradient."""
         from scipy.optimize import minimize
 
         idx = self._check_inputs(xb, B, y, R, idx, n)
-        R_inv = np.linalg.inv(R)
-
+        R_inv = np.diag(1./np.diag(R))
+        # define a method to return cost. Input should one parameter.
         def fun(x):
             return self.cost_function(x, xb, B, R_inv, idx, y, h, n)
-
+        # define a method to return gradient. Input should one parameter.
         def jac(x):
             return self.gradient(x, xb, B, y, R_inv, idx, H, h, n)
 
@@ -509,7 +520,7 @@ class FourDVar_practical:
             print(f"gradient norm: {np.linalg.norm(result.jac):.6e}")
             print(f"initial cost: {fun(xb):.6e}")
 
-        if return_result:
+        if return_history:
             return result.x, result
         return result.x
 # 3DVar

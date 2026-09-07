@@ -7,7 +7,7 @@ sys.path.append(str(parent_dir))
 from toy_models import L96, L96_adm
 from solve_ode import runge_kuta4, rk4_nl_adm
 #from DA_utilis import h,Dh, FourDVar_practical
-from DA_utilis_fixed import h, Dh, FourDVar_practical
+from DA_utilis import h, Dh, FourDVar_practical
 import numpy as np
 import pickle
 '''
@@ -117,12 +117,21 @@ def start_EDA():
             else:
                 Bda = B_perturb; Rda = R_perturb
 
-            initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer_scipy(initial_state[:,nm,ncase],Bda,
-                                                                      observation[:,:,nm,ncase],Rda,obs_idx,n,
-                                                                       Dh,h,max_iter=1000,tol=1e-5,verbose=False)
+            #initial_state[:,nm,ncase] = DA_module.four_dims_var_optimizer_scipy(xb=initial_state[:,nm,ncase],
+            #                                                                    B=Bda,
+            #                                                                    y=observation[:,:,nm,ncase],
+            #                                                                    R=Rda,
+            #                                                                    idx=obs_idx,
+            #                                                                    n=n,
+            #                                                                    H=Dh,
+            #                                                                    h=h,
+            #                                                                    max_iter=1000,
+            #                                                                    tol=1e-5,
+            #                                                                    verbose=True,
+            #                                                                    return_history=False)
     # store EDA
-    with open('ensembleDA.pkl', 'wb') as f:
-        pickle.dump(initial_state, f)
+    #with open('ensembleDA.pkl', 'wb') as f:
+    #    pickle.dump(initial_state, f)
     # store true trajectories
     x_truth = np.zeros((K,nt+1,tof),dtype=np.float64)
     for i in range(tof):
@@ -130,7 +139,7 @@ def start_EDA():
     with open('forecast_truth.pkl', 'wb') as f:
         pickle.dump(x_truth, f)    
     # store background state
-    with open('background.pkl', 'wb') as f:
-        pickle.dump(initial_state_bk, f)
+    #with open('background.pkl', 'wb') as f:
+    #    pickle.dump(initial_state_bk, f)
 
 start_EDA()
