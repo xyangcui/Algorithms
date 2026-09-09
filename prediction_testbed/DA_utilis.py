@@ -283,14 +283,14 @@ class FourDVar_practical:
         return idx
 
     # cost function
-    def cost_function(self,x,xb,B,R_inv,idx,y,h,N,return_results=False):
+    def cost_function(self,x,xb,B,R_inv,idx,y,h,N,lam,return_results=False):
         '''
           cost function of 4DVar
           type: J = 0.5*prior_error + 0.5*measure_error
           Input
              x: current state    (ndim)
             xb: prior state      (ndim)  
-             B: background covariance matrix (ndim,ndim)
+             B: background covariance vector (K,ndim)
              y: measurement / observation
              h: operational function h(x)
              N: time steps in an assimilation window.
@@ -304,8 +304,19 @@ class FourDVar_practical:
         for i in range(N-1):
             x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
         # step2: get value of prior error
+        dim1, dim2 = B.shape
         dx = x - xb
-        Jb = dx.T @ solve(B, dx)
+        if dim1 == dim2:
+           Jb = dx.T @ solve(B, dx)
+        else:
+            # use Woodbury (like the method used in ETKF)
+            lam_1 = 1/lam
+            term1 = lam_1*(dx.T@dx).item()
+            term2 = lam*np.eye(dim1) + B@B.T
+            By = B@dx
+            term2By = solve(term2,By)
+            term2_scalar = lam_1*((B.dot(dx)).T@term2By).item()
+            Jb = term1 - term2_scalar 
         # step3: get value of measurement error
         Jo = 0.0
         for j, i in enumerate(idx):
@@ -317,7 +328,7 @@ class FourDVar_practical:
             return Jb + Jo
 
     # gradient for optimization.
-    def gradient(self,x, xb, B, y, R_inv, idx, H, h, N):
+    def gradient(self,x, xb, B, y, R_inv, idx, H, h, N, lam):
         '''
           adjoint-based method to calculate gradient.
           Input
@@ -351,8 +362,20 @@ class FourDVar_practical:
                 # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
                 x_adj = self.rk4_adm(self.model_ADM,self.model,x_traj[:,i-1],x_adj)
         grad_Jo = -2 * x_adj
-        #step3: get gradient of background.
-        grad_Jb = 2 * solve(B, x-xb)
+        #step3: get gradient of background. (B-1 dx)
+        dim1, dim2 = B.shape
+        dx = x-xb
+        if dim1 == dim2:
+            grad_Jb = 2 * solve(B, dx)
+        else:
+            # Woodbury
+            lam_1 = 1/lam
+            term1 = lam_1*dx
+            term2 = lam*np.eye(dim1) + B@B.T
+            By = B.dot(dx)
+            term2By = solve(term2,By)
+            term2_vector = lam_1*B.T@term2By
+            grad_Jb = 2 * (term1-term2_vector)
 
         return grad_Jb + grad_Jo
 
@@ -405,18 +428,19 @@ class FourDVar_practical:
         return r
 
     # executive function.
-    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,max_iter=200,tol=1e-7,verbose=True, return_history=False):
+    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,lam=0.01,max_iter=200,tol=1e-7,verbose=True, return_history=False):
         '''
         iteration for it. main procedure
         Input
             xb: background state [ndim,]
-            B:  background covariance martrix [ndim,ndim]
+            B:  background vector [realization,ndim]
             y:  real obs.                     [nobs,nstep]
-            R:  obs covariance,               [nobs,nstep]
+            R:  obs error vector,             [nobs]
           idx:  index of observation,         [nobs]
             n:  time of integration.
             H:  obs operator.                 [nobs,nstep]
             h:  obs function. 
+          lam:  a parameter to regularize B. 
         max_iter: maximum steps of iteration.
           tol:  tolerance of gradient. default is 1e-7.
         verbose: output check information.
@@ -435,8 +459,8 @@ class FourDVar_practical:
         grad_list = []
         cost_list = []
 
-        grad_old = self.gradient(x_old, xb, B, y, R_inv, idx, H, h, n)
-        cost_old = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n)
+        grad_old = self.gradient(x_old, xb, B, y, R_inv, idx, H, h, n, lam)
+        cost_old = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n, lam)
 
         grad_list.append(grad_old)
         cost_list.append(cost_old)
@@ -458,14 +482,14 @@ class FourDVar_practical:
             # line search
             alpha = 1.0
             x_new = x_old + alpha*d                          
-            cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n)
+            cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n,lam)
 
             while (cost_new > cost_old+1e-4*alpha*np.dot(grad_old.T,d)) & (alpha > 0.1):
                 alpha *= 0.5
                 x_new = x_old + alpha*d                  
-                cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n)
+                cost_new = self.cost_function(x_new, xb, B, R_inv, idx, y, h, n,lam)
 
-            grad_new = self.gradient(x_new, xb, B, y, R_inv, idx, H, h, n)
+            grad_new = self.gradient(x_new, xb, B, y, R_inv, idx, H, h, n,lam)
             s = x_new - x_old
             yv = grad_new - grad_old
             sy = float(np.dot(s, yv))
@@ -486,7 +510,7 @@ class FourDVar_practical:
             cost_list.append(cost_old)
 
         if verbose:
-            Jb, Jo = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n)
+            Jb, Jo = self.cost_function(x_old, xb, B, R_inv, idx, y, h, n,lam)
             print(f'total times: {iterate+1}')
             print(f'grads norm: {np.linalg.norm(grad_old)}')
             print(f'initial cost: {cost_list[0]}')
@@ -498,7 +522,7 @@ class FourDVar_practical:
             return x_old
 
     def four_dims_var_optimizer_scipy(
-        self, xb, B, y, R, idx, n, H, h, max_iter=200, tol=1e-7,
+        self, xb, B, y, R, idx, n, H, h, lam=0.01, max_iter=200, tol=1e-7,
         verbose=True, return_history=False
     ):
         """Robust L-BFGS-B optimizer using the analytic adjoint gradient."""
@@ -508,10 +532,10 @@ class FourDVar_practical:
         R_inv = np.diag(1./np.diag(R))
         # define a method to return cost. Input should one parameter.
         def fun(x):
-            return self.cost_function(x, xb, B, R_inv, idx, y, h, n)
+            return self.cost_function(x, xb, B, R_inv, idx, y, h, n, lam)
         # define a method to return gradient. Input should one parameter.
         def jac(x):
-            return self.gradient(x, xb, B, y, R_inv, idx, H, h, n)
+            return self.gradient(x, xb, B, y, R_inv, idx, H, h, n, lam)
 
         result = minimize(
             fun, xb.copy(), jac=jac, method="L-BFGS-B",
@@ -614,7 +638,7 @@ def enkf_update_array(xb,y,ObsOp,R,gamma=1.,loc=None):
     '''
     from math import sqrt
     # step1: dim information
-    ndim, nens = xb.shape; nobs = len(y)
+    _, nens = xb.shape; nobs = len(y)
     # step2: get centralized matrix
     IN = np.eye(nens); I = np.ones(nens)
     PI = (IN - np.outer(I,I)/nens)/np.sqrt(nens-1)

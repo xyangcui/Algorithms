@@ -1,0 +1,78 @@
+MODEL
+-----------------------------------------
+Grid                       64 × 64
+dt                         0.005 tu
+beta                       10
+ubar                       0
+Rayleigh damping           1/1000
+n_diss                     2
+tau                        0.10
+forcing_amp_factor         20
+kcut                       20
+forcing                    fixed
+adaptive dt                OFF
+
+INITIAL JET
+-----------------------------------------
+U0                         0.30
+Lj                         0.08
+jet center                 0.50
+meander wavenumber         4
+meander amplitude          0.05
+secondary wave             k=3
+secondary amplitude        0.002
+
+CLIMATOLOGY
+-----------------------------------------
+spin-up                    50 tu
+control run                200 tu
+stored every               0.2 tu
+stored states              ~1000
+
+B
+-----------------------------------------
+samples                    500
+background lead            0.1 tu
+initial error std           20% climatological std
+B                          spatially correlated
+regularization             1% mean B diagonal
+
+OBSERVATIONS
+-----------------------------------------
+spacing                    every 4 × 4 gridpoints
+number                     256
+H size                     256 × 4096
+obs error std              5% climatological std
+R                          sigma_o² I
+spatial correlation in R   none
+
+DA
+-----------------------------------------
+obs interval               0.1 tu
+DA window                  0.5 tu
+model steps / obs          20
+steps / window             100
+observations/window        6
+
+EDA
+-----------------------------------------
+members                    20
+background perturbations   B
+observation perturbations  R
+model forcing perturbation none
+DA window                  0.5 tu
+
+SV
+-----------------------------------------
+optimization time          0.5 tu
+leading SVs                10
+initial norm               Euclidean
+later norm                 B^{-1}
+iterations                 30–50
+
+FORECAST VERIFICATION
+-----------------------------------------
+independent cases          100
+forecast length            3.0 tu
+forecast steps             600
+verification interval      0.1 tu

@@ -1,0 +1,155 @@
+{
+  "configuration_name": "barotropic_da_full_experiment",
+  "model": {
+    "nx": 64,
+    "ny": 64,
+    "state_dimension": 4096,
+    "Lx": 1.0,
+    "Ly": 1.0,
+    "dt": 0.005,
+    "time_integrator": "RK4",
+    "adaptive_dt": false,
+    "beta": 10.0,
+    "ubar": 0.0,
+    "rayleigh_damping": 0.001,
+    "n_diss": 2.0,
+    "tau": 0.1,
+    "forcing_amp_factor": 20.0,
+    "kcut": 20.0,
+    "allow_speedup": false,
+    "speedup_at_c": 0.4,
+    "slowdn_at_c": 0.6,
+    "filter_exp": 8.0,
+    "forcing_realization": "fixed_deterministic_across_truth_forecast_TLM_ADM_cost",
+    "initial_condition": {
+      "type": "periodic_jet_recommended",
+      "U0": 0.3,
+      "Lj": 0.08,
+      "jet_center_fraction_of_Ly": 0.5,
+      "meander_wavenumber": 4,
+      "meander_amplitude_fraction_of_Ly": 0.05,
+      "secondary_wave_wavenumber": 3,
+      "secondary_wave_amplitude": 0.002,
+      "note": "Use a periodic jet/double-jet formulation; the tanh Bickley jet is not periodic in y."
+    }
+  },
+  "spinup_and_control": {
+    "spinup_tu": 50.0,
+    "spinup_steps": 10000,
+    "control_run_tu": 200.0,
+    "control_run_steps": 40000,
+    "save_interval_tu": 0.2,
+    "save_interval_steps": 40,
+    "approx_saved_states": 1000
+  },
+  "background": {
+    "definition": "covariance_of_background_forecast_errors",
+    "error_definition": "e_b = z_b - z_t",
+    "background_lead_tu": 0.1,
+    "background_lead_steps": 20,
+    "initial_coeff": 0.2,
+    "default_num_samples": 500,
+    "debug_num_samples": [
+      50,
+      100
+    ],
+    "preliminary_num_samples": 200,
+    "better_num_samples_range": [
+      1000,
+      2000
+    ],
+    "preferred_representation": "spectral_diagonal_or_low_rank",
+    "raw_full_B_warning": "With 500 samples in 4096 dimensions, raw B has rank <= 499.",
+    "regularization_if_full_B": {
+      "fraction": 0.01,
+      "formula": "B_reg = B + 0.01 * mean(diag(B)) * I"
+    }
+  },
+  "observations": {
+    "operator": "sample_every_4th_gridpoint_in_x_and_y",
+    "observation_grid_shape": [
+      16,
+      16
+    ],
+    "nobs": 256,
+    "implementation": "indexing_not_dense_H",
+    "R": {
+      "type": "diagonal_independent_errors",
+      "obs_coeff": 0.05,
+      "formula": "R = sigma_o^2 * I",
+      "sensitivity_sigma_fractions": [
+        0.02,
+        0.05,
+        0.1
+      ]
+    }
+  },
+  "data_assimilation": {
+    "cycle_interval_tu": 0.1,
+    "cycle_interval_steps": 20,
+    "four_d_var_window_tu": 0.5,
+    "four_d_var_window_steps": 100,
+    "observation_times_tu": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5
+    ],
+    "n_observation_times_per_window": 6,
+    "background_generation": {
+      "method": "perturb_truth_at_t_minus_0p1_then_forecast_truth_and_perturbed_state_to_t0",
+      "purpose": "create_dynamically_evolved_background_error"
+    }
+  },
+  "eda": {
+    "control_plus_perturbed_members": true,
+    "default_members": 20,
+    "sensitivity_members": [
+      10,
+      20,
+      40
+    ],
+    "background_perturbations": "drawn_from_B",
+    "observation_perturbations": "drawn_from_R_independently_at_each_obs_time_and_member",
+    "forcing": "same_deterministic_realization_initially"
+  },
+  "singular_vectors": {
+    "optimization_interval_tu": 0.5,
+    "leading_vectors": 10,
+    "initial_norm": "Euclidean",
+    "operator": "M_star_M",
+    "iterations_range": [
+      30,
+      50
+    ],
+    "later_extension": "B_weighted_initial_norm"
+  },
+  "forecast_evaluation": {
+    "n_cases": 100,
+    "forecast_length_tu": 3.0,
+    "forecast_steps": 600,
+    "verification_interval_tu": 0.1,
+    "verification_interval_steps": 20,
+    "verification_times_including_initial": 31,
+    "systems": [
+      "truth",
+      "background",
+      "4DVar_analysis",
+      "EDA_mean",
+      "optional_SV_plus_minus_perturbations"
+    ],
+    "metrics": [
+      "RMSE",
+      "ensemble_spread"
+    ]
+  },
+  "validation_status": {
+    "RK4_TLM_ADM_dot_product": "validated_to_machine_precision_on_debug_grids",
+    "instantaneous_TLM_finite_difference": "validated_first_order",
+    "instantaneous_TLM_ADM": "validated_to_machine_precision",
+    "RK4_plus_hyperviscosity_plus_antialias": "validated_to_machine_precision",
+    "full_64x64_end_to_end_DA_experiment": "not_yet_run"
+  }
+}

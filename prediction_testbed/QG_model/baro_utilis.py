@@ -1,8 +1,7 @@
 
 import numpy as np
-
-from numpy import pi, cos, sin
-from numpy.fft import fftshift, fftfreq, rfft2, irfft2, fft2, ifft2
+from numpy import pi
+from numpy.fft import fftfreq, fft2, ifft2
 
 ### Function Definitions
 def ft(phi):
@@ -124,7 +123,7 @@ def adams_bashforth_adm(adm, lam_new, zt, dt, n):
     lam_old = lam_new + adm(q, zt[k])
     
     # update lambda history
-    lam_p2 = lam_p1.copy() if hasattr(lam_p1, "copy") else lam_p1
+    lam_p2 = lam_p1.copy() if hasattr(lam_p1, "copy") else lam_p1 # type: ignore
     lam_p1 = lam_new.copy()
 
     return lam_old
@@ -272,35 +271,25 @@ which replaces hyperviscosity.
 It can be de-aliased. 
 
 """
-    def __init__(self, nx=256, ny=256, 
-                       Lx=1.0, Ly=1.0, 
-                       ubar=0.00, 
-                       beta=12.0,
-                       n_diss=2.0, 
-                       tau=0.1,
-                       dt=0.01,
-                       r_rayleigh=(1./50000.)/np.sqrt(10.),
-                       forcing_amp_factor=100.0/np.sqrt(1.),
-                       filter_exp=8.0, kcut=30.0,
-                       speedup_at_c=0.4, slowdn_at_c=0.6,allow_speedup=True):
+    def __init__(self, config):
         # input parameter
-        self.nx = nx
-        self.ny = ny
-        self.Lx = Lx
-        self.Ly = Ly
-        self.ubar = ubar
-        self.beta = beta
-        self.n_diss = n_diss
-        self.tau = tau
-        self.r_rayleigh = r_rayleigh
-        self.forcing_amp_factor = forcing_amp_factor
-        self.allow_speedup = allow_speedup
-        self.speedup_at_c = speedup_at_c
-        self.slowdn_at_c = slowdn_at_c
-        self.filter_exp = filter_exp
-        self.kcut = kcut
-        self.dt   = dt
-        self.amp  = 0.
+        self.nx = config['nx']
+        self.ny = config['ny']
+        self.Lx = config['Lx']
+        self.Ly = config['Ly']
+        self.ubar = config['ubar']
+        self.beta = config['beta']
+        self.n_diss = config['n_diss']
+        self.tau = config['tau']
+        self.r_rayleigh = config['rayleigh_damping']
+        self.forcing_amp_factor = config['forcing_amp_factor']  
+        self.allow_speedup = config['allow_speedup']
+        self.speedup_at_c = config['speedup_at_c']
+        self.slowdn_at_c = config['slowdn_at_c']
+        self.filter_exp = config['filter_exp']
+        self.kcut = config['kcut']
+        self.dt = config['dt']
+        self.amp = config['forcing_amp_factor']
         # build-in parameter
         self._setup_derived_parameters()
 
@@ -386,7 +375,6 @@ It can be de-aliased.
     def initial_state(self):
         z = np.zeros((self.ny, self.nx), dtype=np.float64)
         zt = np.zeros((int(self.nl), int(self.nk)), dtype=np.complex128)
-
         ### Initial Condition
         # The McWilliams Initial Condition from [McWilliams - J. Fluid Mech. (1984)]
         #ck   = np.sqrt(ksq + (1.0 + (ksq/36.0)**2))**-1
@@ -406,19 +394,55 @@ It can be de-aliased.
         self.anti_alias(zt)
         z = ift(zt)
         # calc a reasonable forcing amplitude
-        self.amp = forcing_amp_factor* np.max(np.abs(qi)) 
+        self.amp = self.forcing_amp_factor* np.max(np.abs(qi)) 
+        return z, zt
+    
+    def initial_state_jet(self):
+        """Wavenumber-4 meandering jet initial condition.
+            
+        """
+        # physical coordinates
+        x = np.arange(self.nx) * self.dx
+        y = np.arange(self.ny) * self.dy
+
+        xx, yy = np.meshgrid(x, y)
+        # Jet parameters
+        U0 = 0.30
+        Lj = 0.08
+        y0 = 0.50 * self.Ly
+
+        meander_amp = 0.05 * self.Ly
+        m = 4
+        # Meandering jet center
+        jet_center = (y0+ meander_amp* np.sin(2.0 * np.pi * m * xx / self.Lx))
+        # Streamfunction
+        psi = -U0 * Lj * np.tanh((yy - jet_center) / Lj)
+        psi += 0.002* np.cos(2.0 * np.pi * 3 * xx / self.Lx)* np.sin(2.0 * np.pi * yy / self.Ly)
+        # remove mean streamfunction
+        psi -= psi.mean()
+        # spectral streamfunction
+        psit = ft(psi)
+        # zeta = Laplacian(psi)
+        zt = -self.ksq * psit
+        # enforce zero mean vorticity
+        zt[0, 0] = 0.0
+        # remove unresolved modes
+        self.anti_alias(zt)
+        # physical vorticity
+        z = ift(zt)
+
         return z, zt
     
     def processing(self,zt):
         # 0.1 calculate derivatives in spectral space (spectral)
         psit = -self.rksq * zt           # F[ψ] = - F[ζ] / (k^2 + l^2)
-        psixt, psiyt = model.grad(psit)
+        psixt, psiyt = self.grad(psit)
         # 0.2 transform back to physical space for courant number
         psix = ift(psixt)
         psiy = ift(psiyt)
         # 0.3 calculate the size of timestep that can be taken
         # (assumes a domain where dx and dy are of the same order)
-        c = model.courant_number(psix, psiy, self.dt)
+        c = self.courant_number(psix, psiy, self.dt)
         if c >= self.slowdn_at_c:
             print('DEBUG: Courant No > 0.8, reducing timestep')
             self.dt = 0.9*self.dt
@@ -497,12 +521,34 @@ It can be de-aliased.
         jac = (psix * zy- psiy * zx+ self.ubar * zx)
         jact = ft(jac)
         # add forcing in spectral space.
-        if (forcing == None).any():
+        if forcing is None:
             rhs = -jact -self.beta*psixt -self.r_rayleigh*zt 
         else:
-            rhs = -jact -self.beta*psixt -self.r_rayleigh*zt + forcet
+            rhs = -jact -self.beta*psixt -self.r_rayleigh*zt + forcing
 
         return rhs  
+
+    def bve_propagator(self,zt,forcet,verbose=False):
+        '''Integrate BVE one step forward by the 4th order of runge kuta.
+           
+            Input
+              zt: streamfunction in spectra space.
+              forcet: forcing.
+              verbose: print info. default is False.
+
+            Ouput
+              zt: streamfunction in spectra space.
+        '''
+        zt  = runge_kuta4(lambda z: self.bve_operator(z, forcet), zt, self.dt)
+        # use hyperviscosity to reduce high wavenumber
+        zt = self.hyperviscosity(zt,self.dt)
+        # anti_alias
+        self.anti_alias(zt)
+        # diagnosis
+        #if verbose:
+            #print('c={:.2f} dt={:.3f}'.format(c, dt))
+
+        return zt
 
     def bve_tlm(self,dzt,zt):
         """
@@ -555,8 +601,8 @@ It can be de-aliased.
         # RK4 NLM + TLM
         zt, dzt = rk4_nl_tlm(models,zt,dzt,self.dt,forcet)
         # same post-processing for BOTH
-        zt = self.hyperviscosity(zt, dt)
-        dzt = self.hyperviscosity(dzt, dt)
+        zt = self.hyperviscosity(zt, self.dt)
+        dzt = self.hyperviscosity(dzt, self.dt)
 
         self.anti_alias(zt)
         self.anti_alias(dzt)
@@ -568,7 +614,7 @@ It can be de-aliased.
     Adjoint model of Barotropic vorticity equation tendency operator.
     Input
         rhs_ad: dynamical term passed from time integration.
-        zt: time n nonlinear state.
+        zt: time n nonlinear state. in spectra space.
     Output
         lam_old: adjoint variable
     """
@@ -626,13 +672,13 @@ It can be de-aliased.
         Input
           models: a class of model.
           n: current index of integration.
-          z_base[nstep,ndims]: till now nonlinear states.
+          z_base[nstep,ndims]: till now nonlinear states. in spectra space.
           lam: current linear state.
           forcet: forcing
         Output
           lam: adjoint variable
         '''
-        zt = ft(z_base[n-1])
+        zt = z_base[n-1]
         models.anti_alias(lam)
         lam = models.hyperviscosity(lam,self.dt)
         lam = rk4_nl_adm(models,zt,lam,self.dt,forcet)
@@ -641,40 +687,28 @@ It can be de-aliased.
 
 if __name__ == "__main__":
 
-    nx = 256
-    ny = 256
-    Lx = 1.0
-    Ly = 1.0
-    ubar = 0.00
-    beta = 12.0
-    n_diss = 2.0
-    tau = 0.1
-    r_rayleigh = (1. / 50000.) / np.sqrt(10.)
-    forcing_amp_factor = 100.0 / np.sqrt(1.)
-    filter_exp = 8.0
-    kcut = 30.0
-    SPEEDUP_AT_C = 0.4
-    SLOWDN_AT_C  = 0.6
-    ALLOW_SPEEDUP = False
-    dt = 0.02#0.4 * 16.0 / nx
-    model = BARO_VORT(
-        nx=nx, 
-        ny=ny, 
-        Lx=Lx, 
-        Ly=Ly,
-        ubar=ubar, 
-        beta=beta, 
-        n_diss=n_diss, 
-        tau=tau,
-        dt=dt,
-        r_rayleigh=r_rayleigh, 
-        forcing_amp_factor=forcing_amp_factor,
-        filter_exp=filter_exp, 
-        kcut=kcut,
-        speedup_at_c=SPEEDUP_AT_C, 
-        slowdn_at_c=SLOWDN_AT_C,
-        allow_speedup=ALLOW_SPEEDUP
-    )
+    config = {
+        "model": {
+        "nx": 256,
+        "ny": 256,
+        "Lx": 1.0,
+        "Ly": 1.0,
+        "ubar": 0.00,
+        "beta": 12.0,
+        "n_diss": 2.0,
+        "tau": 0.1,
+        "r_rayleigh": (1. / 50000.) / np.sqrt(10.),
+        "forcing_amp_factor": 100.0 / np.sqrt(1.),
+        "filter_exp": 8.0,
+        "kcut": 30.0,
+        "allow_speedup": False,          # 原 ALLOW_SPEEDUP
+        "speedup_at_c": 0.4,             # 原 SPEEDUP_AT_C
+        "slowdn_at_c": 0.6,              # 原 SLOWDN_AT_C
+        "dt": 0.02                       # 原 dt
+        }
+    }
+    dt = config['model']['dt']
+    model = BARO_VORT(config)
 
     ## SETUP
     tmax = 1; t = 0.0; step = 0
@@ -856,8 +890,9 @@ if __name__ == "__main__":
         v = lam
         #lam = Mu.copy()
         z_adm[-1] = ift(lam)
+        zbase = ft(z_base)
         for n in range(nstep, 0, -1):
-            zt = ft(z_base[n-1])
+            zt = zbase[n-1]
 
             model.anti_alias(lam)
             lam = model.hyperviscosity(lam,dt)

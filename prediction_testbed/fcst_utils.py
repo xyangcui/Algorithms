@@ -79,9 +79,10 @@ def propagator(x, P, r0, rf, TLM, ADM):
     v  = x/r0
     x1 = TLM(v)
     # use CF to normalize x1. like CF @ x1
-    x2 = rf*x1
+    x2 = rf*P.dot(x1)
+    PT = P.T
     # backward integration to get L.T @ x2
-    u  = ADM(x2)
+    u  = ADM(PT.dot(x2))
     # u = Norm @ u
     return u/r0
 
@@ -206,14 +207,15 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
        Finally, linearly combine these singular vectors to generate a forecast ensemble.
 
     Reference
-
+        https://www.ecmwf.int/en/about/media-centre/media-resources/tim-palmer-festschrift/
+                    The-ECMWF-initial-ensemble-perturbation-strategy.
     Input
       m: length of space.
       nsv: the number of singular vectors
       scale: determine the size of Krylov subspace. (scale*nsv) <= m
       tol: determine whether to cut iteration
       r0: Norm vector of initial state.
-      P[m,m]: project matrix (where to use)
+      P[m,m]: Local projection operator (where to use)
       CF: fNorm vector of final state. (perhaps total energy metrics.)
       TLM: function to integrate TLM. (only needs input as self-variable)
       ADM: function to integrate ADM, (like TLM)
