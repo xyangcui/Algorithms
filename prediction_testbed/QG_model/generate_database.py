@@ -16,6 +16,7 @@ model = BARO_VORT(config['model'])
 z, zt = model.initial_state_jet()
 ## apply fixed forcing in spectral space by exciting certain wavenumbers
 forcet = model.forcing_operator(z.shape)
+
 ## spin up
 spinup_tu = config['spinup_and_control']['spinup_tu']
 steps = int(spinup_tu/dt)
@@ -108,6 +109,8 @@ lam = frac*(diag_mean_bk + initial_coeff**2 * diag_mean_clim)
 z_evolve  = np.zeros((nfcst,int(da_window/da_tu),nx,ny),dtype=np.float32)
 z_initial = np.zeros((nfcst,nx,ny),dtype=np.float32)
 z_initial_spec = np.zeros((nfcst,nx,ny),dtype=np.complex128)
+# a vector storing which step has observation.
+obs_step_idx = np.zeros(int(da_window/da_tu),dtype=np.int64)
 k = 0
 zt = zbase[-1,:,:]
 while k < nfcst:
@@ -123,6 +126,7 @@ while k < nfcst:
         zt = model.bve_propagator(zt,forcet,verbose=True)
         if (j + 1) % int(round(da_tu/dt)) == 0:
             z_evolve[k,i] = ift(zt)
+            obs_step_idx[i] = j+1
             i += 1
     k += 1
 
@@ -203,6 +207,10 @@ data_dict = {
         'data': zphy[:K//2],
         'description': 'an ensemble that stores the information of C.'
     },
+    'forcing': {
+        'data': forcet,
+        'description': 'forcing in spectra space.'
+    },
 }
 
 with open('climate_simulation.pkl', 'wb') as f:
@@ -275,6 +283,10 @@ data_dict = {
     'obs_idx': {
         'data': obs_idx,
         'description': 'a ravelled version of obs_idx_2d'
+    },
+    'obs_step_idx': {
+        'data': obs_step_idx,
+        'description': 'which step has observation'
     },
 }
 

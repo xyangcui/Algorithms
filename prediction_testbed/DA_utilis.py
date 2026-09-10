@@ -262,11 +262,9 @@ class FourDVar_practical:
         https://www.ecmwf.int/en/elibrary/79860-data-assimilation-concepts-and-methods
     '''
 
-    def __init__(self,model,model_ADM,rk4,rk4_adm):
-        self.model = model
-        self.model_ADM = model_ADM
-        self.RK4 = rk4
-        self.rk4_adm = rk4_adm
+    def __init__(self,model_propagator,model_ADM_propagator):
+        self.model_propagator = model_propagator
+        self.model_ADM_propagator = model_ADM_propagator
 
     def _check_inputs(self, xb, B, y, R, idx, N):
         idx = np.asarray(idx, dtype=int)
@@ -274,12 +272,12 @@ class FourDVar_practical:
             raise ValueError("idx must be a 1-D array of model-step observation indices")
         if len(idx) != y.shape[1]:
             raise ValueError(f"len(idx)={len(idx)} but y has {y.shape[1]} observation times")
-        if len(idx) and (idx.min() < 0 or idx.max() >= N):
-            raise ValueError(f"observation indices {idx} must lie in [0, {N-1}]")
-        if B.shape != (xb.size, xb.size):
-            raise ValueError("B has incompatible shape")
-        if R.shape != (y.shape[0], y.shape[0]):
-            raise ValueError("R has incompatible shape")
+        if len(idx) and (idx.min() < 0 or idx.max() > N):
+            raise ValueError(f"observation indices {idx} must lie in [0, {N}]")
+        #if B.shape != (xb.size, xb.size):
+        #    raise ValueError("B has incompatible shape")
+        #if R.shape != (y.shape[0], y.shape[0]):
+        #    raise ValueError("R has incompatible shape")
         return idx
 
     # cost function
@@ -300,9 +298,9 @@ class FourDVar_practical:
         from scipy.linalg import solve
         K = len(x)  # number of dims
         # step1: get values in an assimilation window
-        x_traj = np.zeros((K,N)); x_traj[:,0] = x
-        for i in range(N-1):
-            x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
+        x_traj = np.zeros((K,N+1)); x_traj[:,0] = x
+        for i in range(N):
+            x_traj[:,i+1] = self.model_propagator(x_traj[:,i])
         # step2: get value of prior error
         dim1, dim2 = B.shape
         dx = x - xb
@@ -320,7 +318,7 @@ class FourDVar_practical:
         # step3: get value of measurement error
         Jo = 0.0
         for j, i in enumerate(idx):
-            innovation = y[:, j] - h(x_traj[:, i],K)
+            innovation = y[:, j] - h(x_traj[:, i])
             Jo += innovation.T @ R_inv @ innovation
         if return_results:
             return Jb, Jo
@@ -339,7 +337,7 @@ class FourDVar_practical:
             R_inv: observational covar
             H: observational operator
             h: observation function
-            N: times of observation.
+            N: steps of assimilation window.
           Output
             gradient dimensions like x.
         '''
@@ -347,20 +345,20 @@ class FourDVar_practical:
         K = len(x)  #number of dim
         obs_map = {step: j for j, step in enumerate(idx)}
         # step1: get values in an assimilation window.
-        x_traj = np.zeros((K,N)); x_traj[:,0] = x
-        for i in range(N-1):
-            x_traj[:,i+1] = self.RK4(self.model,x_traj[:,i])
+        x_traj = np.zeros((K,N+1)); x_traj[:,0] = x
+        for i in range(N):
+            x_traj[:,i+1] = self.model_propagator(x_traj[:,i])
         # step2: get gradient of observation.
         x_adj = np.zeros(K)
-        for i in range(N-1, -1, -1):
+        for i in range(N, -1, -1):
             # step 1: calc forcing.
             if i in obs_map:
                 j = obs_map[i]
-                forcing = H(x_traj[:,i],K).T @ R_inv @ (y[:,j] - h(x_traj[:,i],K))
+                forcing = H(x_traj[:,i]).T @ R_inv @ (y[:,j] - h(x_traj[:,i]))
                 x_adj = x_adj + forcing
             if i > 0:
                 # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
-                x_adj = self.rk4_adm(self.model_ADM,self.model,x_traj[:,i-1],x_adj)
+                x_adj = self.model_ADM_propagator(x_traj[:,i-1],x_adj)
         grad_Jo = -2 * x_adj
         #step3: get gradient of background. (B-1 dx)
         dim1, dim2 = B.shape
@@ -437,7 +435,7 @@ class FourDVar_practical:
             y:  real obs.                     [nobs,nstep]
             R:  obs error vector,             [nobs]
           idx:  index of observation,         [nobs]
-            n:  time of integration.
+            n:  steps of assimilation window.
             H:  obs operator.                 [nobs,nstep]
             h:  obs function. 
           lam:  a parameter to regularize B. 
@@ -450,7 +448,7 @@ class FourDVar_practical:
         '''
         memory = 10
         # invert R
-        R_inv = np.diag(1./np.diag(R))
+        R_inv = np.diag(1./R)
         # iteration. (x0 newest; xb the old one)
         x_old = xb
         s_list = []
@@ -529,7 +527,7 @@ class FourDVar_practical:
         from scipy.optimize import minimize
 
         idx = self._check_inputs(xb, B, y, R, idx, n)
-        R_inv = np.diag(1./np.diag(R))
+        R_inv = np.diag(1./R)
         # define a method to return cost. Input should one parameter.
         def fun(x):
             return self.cost_function(x, xb, B, R_inv, idx, y, h, n, lam)

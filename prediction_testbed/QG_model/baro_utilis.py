@@ -666,7 +666,7 @@ It can be de-aliased.
 
         return lam_old
 
-    def bve_adm_propagator(self,models,n,z_base,lam,forcet):
+    def bve_adm_propagator(self,models,zt,lam,forcet):
         '''
         One step integration of ADM.
         Input
@@ -678,7 +678,6 @@ It can be de-aliased.
         Output
           lam: adjoint variable
         '''
-        zt = z_base[n-1]
         models.anti_alias(lam)
         lam = models.hyperviscosity(lam,self.dt)
         lam = rk4_nl_adm(models,zt,lam,self.dt,forcet)
