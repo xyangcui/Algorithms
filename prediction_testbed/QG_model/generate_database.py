@@ -43,6 +43,9 @@ obs_coeff = config['observations']["R"]['obs_coeff']
 nobs = config['observations']['nobs']
 obs_interval = (nx*ny)/nobs
 obs_interval_real = int(nx/sqrt(nobs))
+## EDA info
+EDA_members = config['eda']['default_members']
+frac = config['background']['regularization_if_full_B']['fraction']
 
 ## calculate climatological matrix
 zbase = np.zeros((K,lx,ly),dtype=np.complex128)
@@ -59,27 +62,25 @@ while k < K:
 ## store it in spectra domain   
 #C = np.cov(zphy.reshape(K, -1).T)
 real_anom = zphy - zphy.mean(axis=0,keepdims=True)
-diag_mean = np.mean(np.sum(real_anom**2, axis=0))/(K-1)
-frac = config['background']['regularization_if_full_B']['fraction']
-#Breg = B + frac*np.diag(B).mean()*np.eye(nx*ny)
-lamc = frac*diag_mean
+diag_mean_clim = np.mean(np.sum(real_anom**2, axis=0))/(K-1)
+lamc = frac * initial_coeff**2 * diag_mean_clim
 
 ## calculate background error matrix
 zphyB = zphy[:K//2].copy()
 zbaseB= zbase[:K//2]
 zphyBp= zphyB.copy()
-# disturb in spectra domain.
+# disturb in spectra domain. (climatological)
 mean_spec = np.mean(zbase, axis=0)          
 anom_spec = zbase - mean_spec               
-var_spec = np.var(anom_spec, axis=0, ddof=1)     
-std_spec = np.sqrt(var_spec)                      
+var_spec = np.var(anom_spec, axis=0, ddof=1)    
+std_spec_clim = np.sqrt(var_spec)                      
 
 rng = np.random.default_rng(seed=42)
 # gaussian noise.
 phys_noise = rng.normal(0, 1, size=(K//2, nx, ny))
 spec_noise = (np.fft.fft2(phys_noise, axes=(-2, -1))/ np.sqrt(nx * ny)) 
 # perturbation in spectral domain
-spectral_perturbation = initial_coeff* spec_noise * std_spec
+spectral_perturbation = initial_coeff* spec_noise * std_spec_clim
 zbaseBp = zbaseB + spectral_perturbation
 #z_error = rng.multivariate_normal(mean=np.zeros(C.shape[0]), cov=initial_coeff * C, size=(K//2))
 
@@ -92,20 +93,21 @@ for isample in range(K//2):
     
     zphyBp[isample] = ift(ztp)
     zphyB[isample]  = ift(zt)
+    zbaseBp[isample] = ztp
+    zbaseB[isample] = zt
 # change to physical space
 error = zphyBp.reshape(K//2,-1) - zphyB.reshape(K//2,-1)
 error_center = error - error.mean(axis=0,keepdims=True)
 #B = np.cov(error)
 # regularize
-diag_mean = np.mean(np.sum(error_center**2, axis=0))/(K//2-1)
-frac = config['background']['regularization_if_full_B']['fraction']
-#Breg = B + frac*np.diag(B).mean()*np.eye(nx*ny)
-lam = frac*diag_mean
+diag_mean_bk = np.mean(np.sum(error_center**2, axis=0))/(K//2-1)
+lam = frac*(diag_mean_bk + initial_coeff**2 * diag_mean_clim)
 
 ## generate forecast truth
 # obtain state at the start of assimilation.
 z_evolve  = np.zeros((nfcst,int(da_window/da_tu),nx,ny),dtype=np.float32)
 z_initial = np.zeros((nfcst,nx,ny),dtype=np.float32)
+z_initial_spec = np.zeros((nfcst,nx,ny),dtype=np.complex128)
 k = 0
 zt = zbase[-1,:,:]
 while k < nfcst:
@@ -113,6 +115,7 @@ while k < nfcst:
     for i in range(int(2*int(da_window/dt))):
         zt = model.bve_propagator(zt,forcet,verbose=True)    
     z_initial[k] = ift(zt)
+    z_initial_spec[k] = zt
     # evolve state
     t = 0.; i = 0
     for j in range(int(da_window/dt)):
@@ -123,22 +126,45 @@ while k < nfcst:
             i += 1
     k += 1
 
-## generate observation. (add R to z_evolve)
+## generate initial state for control and perturbed forecasts
+# control forecast
+phys_noise = rng.normal(0, 1, size=(nfcst, nx, ny))
+spec_noise = (np.fft.fft2(phys_noise, axes=(-2, -1))/ np.sqrt(nx * ny)) 
+# perturbation in spectral domain
+spectral_perturbation  = initial_coeff* spec_noise * std_spec_clim
+z_initial_control_spec = z_initial_spec + spectral_perturbation
+z_initial_control = ift(z_initial_control_spec)
+# perturbed forecasts
+error_spec = zbaseBp - zbaseB
+mean_spec = np.mean(error_spec, axis=0)          
+anom_spec = error_spec - mean_spec               
+var_spec = np.var(anom_spec, axis=0, ddof=1)    
+std_spec_pert = np.sqrt(var_spec)
+
+phys_noise = rng.normal(0, 1, size=(nfcst, EDA_members, nx, ny))
+spec_noise = (np.fft.fft2(phys_noise, axes=(-2, -1))/ np.sqrt(nx * ny)) 
+spectral_perturbation  = spec_noise * std_spec_pert
+
+z_initial_perturbed_spec = z_initial_control_spec[:,None,:,:] + spectral_perturbation
+z_initial_perturbed = ift(z_initial_perturbed_spec)
+
+## generate observation. (add R to z_evolve) (include control and perturbed forecast)
 zphy_anom = zphy - np.mean(zphy,axis=0)
-diag_C = np.sum(zphy_anom.reshape(K,-1)**2,axis=0) / (K-1)
+diag_C = np.sum(zphy_anom.reshape(K,-1)**2,axis=0) / (K-1) 
 
 obs_idx_2d = np.arange(nx*ny).reshape(nx, ny)[::obs_interval_real,::obs_interval_real]
 obs_idx = obs_idx_2d.ravel()
 
 obs_var = (obs_coeff**2) * diag_C[obs_idx]
-R = np.diag(obs_var)
-
 std_obs = np.sqrt(obs_var)
-obs_error_flat = rng.normal(0., std_obs, size=(nfcst, int(da_window/da_tu), len(std_obs)))
-obs_error_field = np.zeros((nfcst, int(da_window/da_tu), nx, ny), dtype=np.float64)
-obs_error = rng.multivariate_normal(mean=np.zeros(R.shape[0]), cov=R, size=(nfcst, int(da_window/da_tu)))
-obs_truth = z_evolve[:,:,::obs_interval_real,::obs_interval_real]
+n_obs_times = int(da_window / da_tu)
+# control forecast
+obs_error = rng.normal(loc=0.0, scale=std_obs,size=(nfcst, n_obs_times, len(std_obs)))
+obs_truth = z_evolve[:, :, ::obs_interval_real, ::obs_interval_real]
 obs = obs_truth + obs_error.reshape(obs_truth.shape)
+# perturbed forecast
+obs_perturb_error = rng.normal(loc=0.0, scale=std_obs,size=(nfcst, EDA_members, n_obs_times, len(std_obs)))
+obs_perturbed = obs[:, None, :, :, :] + obs_perturb_error.reshape(nfcst,EDA_members,n_obs_times,*obs_truth.shape[-2:])
 
 ## generate forecast truth
 z_truth = np.zeros((nfcst,int(fcst_tu/ver_tu)+1,nx,ny),dtype=np.float32)
@@ -158,7 +184,7 @@ for ifcst in range(nfcst):
 phys_noise = rng.normal(0, 1, size=(nfcst, nx, ny))
 spec_noise = (np.fft.fft2(phys_noise, axes=(-2, -1))/ np.sqrt(nx * ny)) 
 # perturbation in spectral domain
-spectral_perturbation = initial_coeff * spec_noise * std_spec
+spectral_perturbation = initial_coeff * spec_noise * std_spec_clim
 #B_init = initial_coeff*C
 #initial_error = rng.multivariate_normal(mean=np.zeros(B_init.shape[0]), cov=B_init, size=nfcst)
 z_noda = z_truth[:,0,:,:] + ift(spectral_perturbation)
@@ -182,35 +208,74 @@ data_dict = {
 with open('climate_simulation.pkl', 'wb') as f:
     pickle.dump(data_dict, f)
 
+
+B_init_factor = initial_coeff* zphy_anom.reshape(K, -1)/ np.sqrt(K - 1)
+B_pert_factor = error_center/ np.sqrt(K//2 - 1)
+B_pert_total_factor = np.vstack([B_init_factor,B_pert_factor])
+
 data_dict = {
     'z_initial': {
         'data': z_initial,
-        'description': 'State at the start of assimilation window'
+        'description': 'Real state at the start of assimilation window, '
+    },
+    'z_initial_control': {
+        'data': z_initial_control,
+        'description': 'State at the start of assimilation window, control forecast'
     },
     'B_init': {
-        'data': zphy_anom/sqrt(K-1),
-        'description': 'B_init matrix B_init.T@B_int + lamc*I'
+        'data': B_init_factor,
+        'description': 'B_init matrix B_init.T@B_int'
     },
     'lam_B_init': {
         'data': lamc,
         'description': 'lambda to regularize B_init matrix B_init.T@B_int + lamc*I'
     },
-    'Breg': {
-        'data': error_center/sqrt(K//2-1),
-        'description': 'Background matrix generated by error_center.T@error_center + lam*I [nsample,nx*ny]'
+    'z_initial_pert': {
+        'data': z_initial_perturbed,
+        'description': 'State at the start of assimilation window, perturbed forecasts'
     },
-    'lamb': {
+    'B_pert': {
+        'data': B_pert_factor,
+        'description': 'Background matrix generated by error_center.T@error_center [nsample,nx*ny]'
+    },
+    'B_pert_total': {
+        'data': B_pert_total_factor,
+        'description': 'Background matrix for EDA. B_pert_total.T@B_pert_total [nsample,nx*ny]'
+    },
+    'lam_B_pert': {
         'data': lam,
         'description': 'lambda to regularize background matrix'
     },
     'obs': {
         'data': obs,
-        'description': 'Observation'
+        'description': 'original observation for the control forecast.'
     },
-    'R': {
-        'data': R,
-        'description': 'Representative error vector.'
-    }
+    'obs_control_std':{
+        'data': std_obs,
+        'description': 'standard deviation vector of the control observation.'
+    },
+    'obs_pert': {
+        'data': obs_perturbed,
+        'description': '[nfcst,nmember,ntime,nobs] observation for perturbed forecasts.'
+    },
+    'obs_pert_std': {
+        'data': std_obs,
+        'description': 'Standard deviation vector used to perturb '
+                        'the control observation; perturbation covariance = R.'
+    },
+    'obs_pert_total_std': {
+        'data': sqrt(2)*std_obs,
+        'description': 'Standard deviation of the perturbed observation '
+                        'relative to truth; total covariance = 2R.'
+    },
+    'obs_idx_2d': {
+        'data': obs_idx_2d,
+        'description': 'location of observation in spatial grid'
+    },
+    'obs_idx': {
+        'data': obs_idx,
+        'description': 'a ravelled version of obs_idx_2d'
+    },
 }
 
 with open('da_processing.pkl', 'wb') as f:

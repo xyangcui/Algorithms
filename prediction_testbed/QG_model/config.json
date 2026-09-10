@@ -117,7 +117,7 @@
   },
   "singular_vectors": {
     "optimization_interval_tu": 0.5,
-    "leading_vectors": 10,
+    "leading_vectors": 20,
     "initial_norm": "Euclidean",
     "operator": "M_star_M",
     "iterations_range": [
