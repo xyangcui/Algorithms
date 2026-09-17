@@ -426,7 +426,7 @@ class FourDVar_practical:
         return r
 
     # executive function.
-    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,lam=0.01,max_iter=200,tol=1e-7,verbose=True, return_history=False):
+    def four_dims_var_optimizer(self,xb,B,y,R,idx,n,H,h,lam=0.01,max_iter=300,tol=1e-4,verbose=True, return_history=False):
         '''
         iteration for it. main procedure
         Input
@@ -520,7 +520,7 @@ class FourDVar_practical:
             return x_old
 
     def four_dims_var_optimizer_scipy(
-        self, xb, B, y, R, idx, n, H, h, lam=0.01, max_iter=200, tol=1e-7,
+        self, xb, B, y, R, idx, n, H, h, lam=0.01, max_iter=300, tol=1e-3,
         verbose=True, return_history=False
     ):
         """Robust L-BFGS-B optimizer using the analytic adjoint gradient."""
@@ -534,7 +534,7 @@ class FourDVar_practical:
         # define a method to return gradient. Input should one parameter.
         def jac(x):
             return self.gradient(x, xb, B, y, R_inv, idx, H, h, n, lam)
-
+        
         result = minimize(
             fun, xb.copy(), jac=jac, method="L-BFGS-B",
             options={
@@ -551,6 +551,7 @@ class FourDVar_practical:
             print(f"iterations: {result.nit}")
             print(f"gradient norm: {np.linalg.norm(result.jac):.6e}")
             print(f"initial cost: {fun(xb):.6e}")
+            print(f"final cost: {fun(result.x):.6e}")
 
         if return_history:
             return result.x, result

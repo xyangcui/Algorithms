@@ -79,10 +79,10 @@ def propagator(x, P, r0, rf, TLM, ADM):
     v  = x/r0
     x1 = TLM(v)
     # use CF to normalize x1. like CF @ x1
-    x2 = rf*P.dot(x1)
-    PT = P.T
+    x2 = rf*P(x1)
+    PT = P
     # backward integration to get L.T @ x2
-    u  = ADM(PT.dot(x2))
+    u  = ADM(PT(x2))
     # u = Norm @ u
     return u/r0
 
@@ -215,7 +215,7 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
       scale: determine the size of Krylov subspace. (scale*nsv) <= m
       tol: determine whether to cut iteration
       r0: Norm vector of initial state.
-      P[m,m]: Local projection operator (where to use)
+      P: Local projection operator (where to use)
       CF: fNorm vector of final state. (perhaps total energy metrics.)
       TLM: function to integrate TLM. (only needs input as self-variable)
       ADM: function to integrate ADM, (like TLM)
@@ -292,10 +292,10 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
     # 4. generate members
     ## use analyze error covariance to decide parameters [nmember,N]
     perturbation = gaussian_sampling(SV_scaled,rescale,nmember,minimal_n)
-    ## back to physical space [m, nmember]
+    ## back to physical space [nmember,m]
     perturbation_phy = Da@perturbation.T
 
-    return perturbation_phy
+    return perturbation_phy.T
 
 ## second-order exact sampling (SOES)
 def construct_constrained_matrix(n):

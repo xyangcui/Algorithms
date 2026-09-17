@@ -5,8 +5,9 @@ sys.path.append(str(parent_dir))
 
 from baro_utilis import BARO_VORT, ift, ft
 from DA_utilis import FourDVar_practical
+from datetime import datetime
 import numpy as np
-import pickle, json, time
+import pickle, json, time, os
 
 ## set model parameters
 with open("config.json", "r") as f:
@@ -18,6 +19,8 @@ ny = config['model']['ny']
 nobs = config['observations']['nobs']
 # cases of forecast
 nfcst = config['forecast_evaluation']['n_cases']
+# number of perturbed members
+eda_members = config['eda']['default_members']
 
 model = BARO_VORT(config['model'])
 
@@ -100,19 +103,27 @@ def adm_propagator(z_state,z_adj):
     return ift(adj_prev_spec).reshape(-1)
 
 z_initial_control_t = z_initial_control.reshape(nfcst,nx*ny)
-z_initial_pert_t = z_initial_pert.reshape(nfcst,20,nx*ny)
+z_initial_pert_t = z_initial_pert.reshape(nfcst,eda_members,nx*ny)
+obs_control = obs.reshape(nfcst,len(obs_step_idx),-1)
+obs_perturb = obs_pert.reshape(nfcst,eda_members,len(obs_step_idx),-1)
 
 DA_module = FourDVar_practical(model_propagator=propagator,
                                model_ADM_propagator=adm_propagator)
 
-z_initial = z_initial_pert_t[0,0]
-B = B_pert
-lam = lamB_pert
-observation = obs_pert.reshape(nfcst,20,obs_steps,-1)[0,0]
-R = obs_std_pert**2
+z_analysis = np.zeros((eda_members+1,nx*ny),dtype=np.float32)
 
 t0 = time.perf_counter()
-z_analysis = DA_module.four_dims_var_optimizer_scipy(xb=z_initial,
+for icase in range(66,69):
+    z_analysis = np.zeros((eda_members+1,nx*ny),dtype=np.float32)
+    # control forecast
+    print(f'case {icase+1} begin. {datetime.now().strftime("%m/%d %H:%M:%S")}')
+    print(f' control forecast.')
+    z_initial = z_initial_control_t[icase]
+    B = B_init
+    lam = lamB_init
+    observation = obs_control[icase]
+    R = obs_std_control**2
+    z_analysis[0,:] = DA_module.four_dims_var_optimizer_scipy(xb=z_initial,
                                                      B=B,
                                                      y=observation.T,
                                                      R=R,
@@ -122,5 +133,29 @@ z_analysis = DA_module.four_dims_var_optimizer_scipy(xb=z_initial,
                                                      h=h,
                                                      lam=lam, 
                                                     )
+    print(f'perturbed forecast begin. {datetime.now().strftime("%m/%d %H:%M:%S")}')
+    for imember in range(eda_members):
+        print(f'member {imember+1}.')
+        z_initial = z_initial_pert_t[icase,imember]
+        B = B_pert
+        lam = lamB_pert
+        observation = obs_perturb[icase,imember]
+        R = obs_std_pert**2        
+        z_analysis[imember+1,:] = DA_module.four_dims_var_optimizer_scipy(xb=z_initial,
+                                                     B=B,
+                                                     y=observation.T,
+                                                     R=R,
+                                                     idx=obs_step_idx,
+                                                     n=da_steps,
+                                                     H=H,
+                                                     h=h,
+                                                     lam=lam, 
+                                                    )
+    # store
+    z_analysis_regrid = z_analysis.reshape(1+eda_members,nx,ny)
+    with open(f'./eda_members/eda_{icase + 1:03d}.pkl', 'wb') as f:
+        pickle.dump(z_analysis_regrid, f)
+
 t1 = time.perf_counter()
 print(f"consumption: {t1 - t0:.4f} s")
+

@@ -191,8 +191,15 @@ spec_noise = (np.fft.fft2(phys_noise, axes=(-2, -1))/ np.sqrt(nx * ny))
 spectral_perturbation = initial_coeff * spec_noise * std_spec_clim
 #B_init = initial_coeff*C
 #initial_error = rng.multivariate_normal(mean=np.zeros(B_init.shape[0]), cov=B_init, size=nfcst)
-z_noda = z_truth[:,0,:,:] + ift(spectral_perturbation)
-
+z_noda = np.zeros((nfcst,1+EDA_members,nx,ny),dtype=np.float32)
+for ifcst in range(nfcst):
+    z_control = z_initial_control_spec[ifcst]
+    for i in range(int(da_window/dt)):
+        z_noda[ifcst,0,:,:] = ift(model.bve_propagator(z_control,forcet,verbose=True))
+    for j in range(EDA_members):
+        for i in range(int(da_window/dt)):
+            z_pert = z_initial_perturbed_spec[ifcst,j]
+            z_noda[ifcst,j+1,:,:] = ift(model.bve_propagator(z_pert,forcet,verbose=True))
 ## store
 data_dict = {
     'zphy': {
