@@ -642,17 +642,17 @@ def enkf_update_array(xb,y,ObsOp,R,gamma=1.,loc=None):
     IN = np.eye(nens); I = np.ones(nens)
     PI = (IN - np.outer(I,I)/nens)/np.sqrt(nens-1)
     # step3: disturb measurement
-    E  = np.random.multivariate_normal(np.zeros(nens), R, size=nobs).T #[nobs, nens]
+    E  = np.random.multivariate_normal(np.zeros(nobs), R, size=nens).T #[nobs, nens]
     D  = y[:,None]@I[None,:] + np.sqrt(nens-1)*E
     # step4: project prior to measurement
-    y_model  = ObsOp(xb); Y = y_model@PI
+    y_model  = ObsOp(xb); Y = y_model@PI; X = xb@PI
     # step5 : update
-    if loc == None:
-        W  = loc@Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
+    if loc is None:
+        W  = Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
     else:
-        W  = loc@Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
+        W  = loc*Y.T@inv(Y@Y.T+E@E.T)@(D - y_model)
     ## inflation
-    xm = xb.mean(aixs=1)
+    xm = xb.mean(axis=1)
     xbp = xb - xm; xbp *= sqrt(gamma)
     xb = (xm[:,None]+xbp) @ (I + W/np.sqrt(nens-1))  
 
@@ -683,12 +683,16 @@ def letkf_update_array(E,R,y,H,loc,gamma=1.0):
     xbb = np.nanmean(E,1).reshape(D,1)
     xbp = E - xbb #/ np.sqrt(nens - 1)
     # model to measurement
-    ym = H(xbb); yp = H(xbp)
+    Y  = H(E)
+    ym = np.nanmean(Y,1); yp = Y - ym[:, None]
+    innovation = y - ym
     # update
     for i in range(D):
         #solve RC = yb get R-1yp transpose: yp.T@R-1
+        rho = loc[i, :]
         C = solve(R, yp, assume_a='pos'); CT = C.T
-        A_mat = (nens-1)/gamma* np.eye(nens) + loc[i:i,:] @ CT @ yp
+        CT_loc = CT * rho[None, :]
+        A_mat = (nens-1)/gamma* np.eye(nens) + CT_loc @ yp
         # use PCA get Pa.
         eigvals, eigvecs = np.linalg.eigh(A_mat)
         tol = 1e-8 * np.max(eigvals)
@@ -704,11 +708,90 @@ def letkf_update_array(E,R,y,H,loc,gamma=1.0):
         eigvals_p = np.maximum(eigvals_p, 0.0) 
         # calculate W and w.
         W = eigvecs_p @ np.diag(np.sqrt(eigvals_p)) @ eigvecs_p.T
-        w = Pa @ CT @ (y.reshape(-1, 1) - ym)
+        w = Pa @ CT_loc @ innovation[:, None]
         if np.iscomplexobj(W):
             W = np.real(W)
         # update locally
         E[i, :] = xbb[i, 0] + xbp[i, :] @ (w + W)
+
+    return E
+
+# sequential EnKS based on LETKF
+def enks_letkf_update_array(E,E0,R,y,H,loc,gamma=1.0):
+    '''
+    Kalman smoother based LETKF.
+    Input
+      E: prior estimation (ndims, nens)
+      R: covariance matrix of measurements (dim_measure,dim_measure) independent
+      y: measurement (dim_measurement)
+      H: corelation between model and measurement, linear case (dim_measure,ndims)
+      gamma: parameter for inflation. default is 1.0, no inflation
+     loc: localization matrix. Default is no localization. (ndim, nobs)
+    Output
+      E: posterior estimation (ndims, nens)
+      E0update: 
+    '''
+    from scipy.linalg import solve
+    D, nens = E.shape[0], E.shape[1]
+    # seperate prior into mean and anomaly
+    xbb = np.nanmean(E,1).reshape(D,1)
+    xbp = E - xbb #/ np.sqrt(nens - 1)
+    # smoother mean.
+    E0mean = np.nanmean(E0, axis=1, keepdims=True)
+    E0anom = E0 - E0mean
+    # model to measurement
+    Y  = H(E)
+    ym = np.nanmean(Y,1); yp = Y - ym[:, None]
+
+    C = solve(R, yp, assume_a='pos'); CT = C.T
+    innovation = y - ym
+
+    # Inner function: local LETKF transform
+    def get_local_transform(i):
+
+        rho = loc[i, :]
+        CT_loc = CT * rho[None, :]
+        A_mat = (
+            (nens - 1) / gamma * np.eye(nens)
+            + CT_loc @ yp
+        )
+
+        eigvals, eigvecs = np.linalg.eigh(A_mat)
+
+        tol = 1e-8 * np.max(eigvals)
+        eigvals = np.maximum(eigvals, tol)
+
+        # Pa in ensemble space
+        Pa = (
+            eigvecs
+            @ np.diag(1.0 / eigvals)
+            @ eigvecs.T
+        )
+
+        # perturbation transform
+        W = (
+            eigvecs
+            @ np.diag(np.sqrt((nens - 1) / eigvals))
+            @ eigvecs.T
+        )
+
+        # mean weights
+        w = Pa @ CT_loc @ innovation[:,None]
+
+        return w + W
+    
+    # update
+    if E0.ndim == 2:
+        for i in range(D):
+            trans_matrix = get_local_transform(i)
+            E[i, :] = xbb[i, 0] + xbp[i, :] @ trans_matrix
+            # smoother
+            E0[i,:] = E0mean[i, 0] + E0anom[i, :] @ trans_matrix
+    else:
+        for i in range(D):
+            trans_matrix = get_local_transform(i)
+            E[i, :] = xbb[i, 0] + xbp[i, :] @ trans_matrix            
+            E0[i,:,:] = E0mean[i, 0, :][None, :] + np.einsum('dec,ef->dfc',E0anom[i, :, :],trans_matrix)
 
     return E
 
@@ -786,7 +869,9 @@ def etkf_update_array(E,R,y,H,gamma=1.0):
     xbb = np.nanmean(E,1).reshape(D,1)
     xbp = E - xbb #/ np.sqrt(nens - 1)
     # model to measurement
-    ym = H(xbb); yp = H(xbp)
+    Y  = H(E)
+    ym = np.nanmean(Y,1); yp = Y - ym[:, None]
+    innovation = y - ym
     #solve RC = yb get R-1yp transpose: yp.T@R-1
     C = solve(R, yp, assume_a='pos'); CT = C.T
     A_mat = (nens-1)/gamma* np.eye(nens) + CT @ yp
@@ -805,13 +890,71 @@ def etkf_update_array(E,R,y,H,gamma=1.0):
     eigvals_p = np.maximum(eigvals_p, 0.0) 
     # calculate W and w.
     W = eigvecs_p @ np.diag(np.sqrt(eigvals_p)) @ eigvecs_p.T
-    w = Pa @ CT @ (y.reshape(-1, 1) - ym)
+    w = Pa @ CT @ innovation[:,None]
     if np.iscomplexobj(W):
         W = np.real(W)
     # udate
     E = xbb+xbp@(w+W)
     return E
 
+# sequential EnKS (based on etkf).
+def enks_etkf_update_array(E,E0,R,y,H,gamma=1.0):
+    '''
+    Kalman smoother based on ETKF.
+    Input
+      E: prior estimation (ndims, nens)
+      E0: state wait for update. (ndims, nens, ncase)
+      R: covariance matrix of measurements (dim_measure,dim_measure)
+      y: measurement (dim_measurement)
+      H: corelation between model and measurement, linear case (dim_measure,ndims)
+      gamma: parameter for inflation. default is 1.0, no inflation
+    Output
+      E: posterior estimation (ndims, nens)
+      E0_update: 
+    '''
+    from scipy.linalg import solve
+    D, nens = E.shape[0], E.shape[1]
+    # seperate prior into mean and anomaly
+    xbb = np.nanmean(E,1).reshape(D,1)
+    xbp = E - xbb #/ np.sqrt(nens - 1)
+    # model to measurement
+    Y  = H(E)
+    ym = np.nanmean(Y,1); yp = Y - ym[:, None]
+    innovation = y - ym
+    #solve RC = yb get R-1yp transpose: yp.T@R-1
+    C = solve(R, yp, assume_a='pos'); CT = C.T
+    A_mat = (nens-1)/gamma* np.eye(nens) + CT @ yp
+    # use PCA get Pa.
+    eigvals, eigvecs = np.linalg.eigh(A_mat)
+    tol = 1e-8 * np.max(eigvals)
+    eigvals = np.where(eigvals < tol, tol, eigvals)
+    Pa = eigvecs @ np.diag(1.0 / eigvals) @ eigvecs.T
+    if not np.allclose(Pa, Pa.T):
+        Pa = (Pa + Pa.T) / 2
+        eigvals_p, eigvecs_p = np.linalg.eigh((nens-1)*Pa)
+    else:
+        eigvals_p = (nens-1) * 1.0 / eigvals
+        eigvecs_p = eigvecs
+
+    eigvals_p = np.maximum(eigvals_p, 0.0) 
+    # calculate W and w.
+    W = eigvecs_p @ np.diag(np.sqrt(eigvals_p)) @ eigvecs_p.T
+    w = Pa @ CT @ innovation[:,None]
+    if np.iscomplexobj(W):
+        W = np.real(W)
+    # udate
+    trans_matrix = w + W
+    E = xbb+xbp@trans_matrix
+    # smoother.
+    E0mean = np.nanmean(E0, axis=1, keepdims=True)
+    E0anom = E0 - E0mean
+
+    if E0.ndim == 2:
+        E0update = E0mean + E0anom @ trans_matrix
+    else:
+        E0update = E0mean + np.einsum('dec,ef->dfc',E0anom,trans_matrix)
+
+    return E, E0update
 # EAKF
 
 # serial SRF
