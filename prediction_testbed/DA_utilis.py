@@ -252,7 +252,7 @@ class FourDVar_Incremental:
         if R.shape[0] != y.shape[0]:
             raise ValueError(f"R length {R.shape[0]} != y length {y.shape[0]}")
     # outer loop
-    def outerloop(self,x_current,obs,idx,h,N):
+    def outerloop(self,x_current,obs,idx,h):
         '''
             return nonliear state and y-h(x)
             Input
@@ -271,7 +271,7 @@ class FourDVar_Incremental:
         return x, d
     ## inner loop
     # cost function
-    def cost_function(self,x,xl_traj,xh_traj,d,B,R_inv,idx,H,N,lam,return_results=False):
+    def cost_function(self,x,xl_traj,xh_traj,d,B,R_inv,idx,H,lam,return_results=False):
         '''
           cost function of 4DVar
           type: J = 0.5*prior_error + 0.5*measure_error
@@ -315,7 +315,7 @@ class FourDVar_Incremental:
         else:
             return Jb + Jo
     # gradient of cost function
-    def gradient(self,x,xl_traj, xh_traj, d, B, R_inv, idx, H, N, lam):
+    def gradient(self,x,xl_traj, d, B, R_inv, idx, H, N, lam):
         '''
           adjoint-based method to calculate gradient.
           Input
@@ -340,8 +340,9 @@ class FourDVar_Incremental:
         for i in range(N, -1, -1):
             # step 1: calc forcing.
             if i in obs_map:
+                H_info = H(xl_traj[:,i])
                 j = obs_map[i]
-                forcing = H(xh_traj[:,i]).T @ R_inv @ (d[:,j] - H(xh_traj[:,i])@x_traj[:,i])
+                forcing = H_info.T @ R_inv @ (d[:,j] - H_info@x_traj[:,i])
                 x_adj = x_adj + forcing
             if i > 0:
                 # step 2: integrate ADM. (practically, integrate TLM forward and ADM backward)
@@ -365,7 +366,7 @@ class FourDVar_Incremental:
         return grad_Jb + grad_Jo    
     # optimizer
     def four_dims_var_optimizer_scipy(
-        self, K, xl_traj, xh_traj, d, B, R, idx, N, H, lam, max_iter, tol,
+        self, x_start, xl_traj, xh_traj, d, B, R, idx, N, H, lam, max_iter, tol,
         verbose, return_history
     ):
         """Robust L-BFGS-B optimizer using the analytic adjoint gradient."""
@@ -373,18 +374,18 @@ class FourDVar_Incremental:
         R_inv = np.diag(1./R)
         # define a method to return cost. Input should one parameter.
         def fun(x):
-            return self.cost_function(x,xl_traj,xh_traj,d,B,R_inv,idx,H,N,lam,return_results=False)
+            return self.cost_function(x,xl_traj,xh_traj,d,B,R_inv,idx,H,lam,return_results=False)
         # define a method to return gradient. Input should one parameter.
         def jac(x):
-            return self.gradient(x,xl_traj, xh_traj, d, B, R_inv, idx, H, N, lam)
-        xb = np.zeros(K)
+            return self.gradient(x,xl_traj, d, B, R_inv, idx, H, N, lam)
+
         result = minimize(
-            fun, xb.copy(), jac=jac, method="L-BFGS-B",
+            fun, x_start.copy(), jac=jac, method="L-BFGS-B",
             options={
                 "maxiter": int(max_iter),
                 "gtol": float(tol),
                 "ftol": 1e-12,
-                "maxls": 40,
+                "maxls":  40,
                 "maxcor": 10,
             },
         )
@@ -393,7 +394,7 @@ class FourDVar_Incremental:
             print(f"success: {result.success} ({result.message})")
             print(f"iterations: {result.nit}")
             print(f"gradient norm: {np.linalg.norm(result.jac):.6e}")
-            print(f"initial cost: {fun(xb):.6e}")
+            print(f"initial cost: {fun(x_start):.6e}")
             print(f"final cost: {fun(result.x):.6e}")
 
         if return_history:
@@ -402,7 +403,7 @@ class FourDVar_Incremental:
     
     # core function
     def core_procedure(
-        self, xb, B, y, R, idx, N, h, H, S, S_inv, n_outer=4, lam=0.01, max_iter=300, tol=1e-3,
+        self, xb, B, y, R, idx, N, h, H, S, S_inv, fcst_step, n_outer=4, lam=0.01, max_iter=300, tol=1e-3,
         verbose=False, return_history=False
     ):
         '''
@@ -413,24 +414,30 @@ class FourDVar_Incremental:
              idx: step that has observation.
              S: map from complex to simple model
              S_inv: map from simple to complex model.
+             fcst_step: distance from start of DA window to do forecast.
              n_outer: integrating loop of outer step.
              lam: for regularization.
              max_iter: maximum iteration
         Outout
-            x_current: analysis state at the start of assimilation window.
+            xa: analysis state.
         '''
         self._check_inputs(B, y, R, idx, N)
         x_current = xb.copy()
         for i in range(n_outer):
             # integrate outer loop.
-            x_outer, d_outer = self.outerloop(x_current,y,idx,h,N)
+            x_outer, d_outer = self.outerloop(x_current,y,idx,h)
             # integrate simple nonlienar model.
             x_inner0 = S(x_current)
             x_inner = self.model_inner_propagator(x_inner0)
-            K = x_inner0.size
+            K = x_inner0.size       
+            # initial increment
+            if i == 0:
+                x_start = np.zeros(K)
+            else:
+                x_start = dx + xb - x_current
             # inner loop
             dx = self.four_dims_var_optimizer_scipy(
-                                                    K,
+                                                    x_start,
                                                     x_inner,
                                                     x_outer,
                                                     d_outer,
@@ -445,9 +452,14 @@ class FourDVar_Incremental:
                                                     verbose=verbose,
                                                     return_history=return_history)
             # add to the final
-            x_current = x_current + S_inv(dx)
+            if i == n_outer-1:
+                '''Late 4D-start to generate an-type fields'''
+                x_inc = self.model_TLM_propagator(dx,x_inner)
+                x_an  = x_outer[:,fcst_step] + S_inv(x_inc[:,fcst_step])
+            else:
+                x_current = x_current + S_inv(dx)
 
-        return x_current    
+        return x_an
 
 ## Ensemble Kalman Filter  (assumption: model is equivalent to linear model; flow-dependent) ##
 # localization

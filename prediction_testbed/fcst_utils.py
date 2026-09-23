@@ -184,7 +184,7 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,D
     _,_,Vh = svd(ADM@TLM,full_matrices=True)
     SV = Vh[:nsv,:].T
     ## rescale and project to ensemble space
-    M,N = Da.shape
+    _,N = Da.shape
     SV_scaled = sqrt(N-1)*Da.T@SV
     # 4. generate members
     ## randomly generate it [nmember//2,N]
@@ -284,18 +284,19 @@ def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verb
     ## back to physical space
     minimal_n = min(len(eigenvalues),nsv)
     SV = np.matmul(Q, eigenvectors)[:,:minimal_n]/ np.sqrt(r0[:, None])
-    ## normalization
+    ## normalization [M,nsv]
     SV = SV / np.linalg.norm(SV,axis=0,keepdims=True)
     ## rescale and project to ensemble space
     _,N = Da.shape
     SV_scaled = sqrt(N-1)*Da.T@SV
+    ancov_norm = np.linalg.norm(SV_scaled)
     # 4. generate members
-    ## use analyze error covariance to decide parameters [nmember,N]
-    perturbation = gaussian_sampling(SV_scaled,rescale,nmember,minimal_n)
+    ## use analyze error covariance to decide parameters [nmember,M]
+    perturbation = gaussian_sampling(SV,rescale/(ancov_norm*ancov_norm/minimal_n),nmember,minimal_n)
     ## back to physical space [nmember,m]
-    perturbation_phy = Da@perturbation.T
+    #perturbation_phy = Da@perturbation.T
 
-    return perturbation_phy.T
+    return perturbation.T  #[M,nmember]
 
 ## second-order exact sampling (SOES)
 def construct_constrained_matrix(n):
