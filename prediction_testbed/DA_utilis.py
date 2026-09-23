@@ -434,7 +434,7 @@ class FourDVar_Incremental:
             if i == 0:
                 x_start = np.zeros(K)
             else:
-                x_start = dx + xb - x_current
+                x_start = xb - x_current
             # inner loop
             dx = self.four_dims_var_optimizer_scipy(
                                                     x_start,

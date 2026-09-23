@@ -186,15 +186,14 @@ def singular_vectors_theoretical(x2,nsv,M_update,M_TLM,sv_dt,sv_length,nmember,D
     ## rescale and project to ensemble space
     _,N = Da.shape
     SV_scaled = sqrt(N-1)*Da.T@SV
+    ancov_norm = np.linalg.norm(SV_scaled)
     # 4. generate members
-    ## randomly generate it [nmember//2,N]
-    perturbation_half = gaussian_sampling(SV_scaled,rescale,nmember//2,nsv)
-    ## back to physical space [m, nmember//2]
-    perturbation_half_phy = Da@perturbation_half.T
-    ## To ensure that the ensemble is centered on the analysis, a plus–minus symmetry is adopted
-    perturbations = np.concatenate([perturbation_half_phy, -perturbation_half_phy],axis=1)
-    
-    return perturbations.T
+    ## use analyze error covariance to decide parameters [nmember,M]
+    perturbation = gaussian_sampling(SV,rescale/(ancov_norm*ancov_norm/nsv),nmember,nsv)
+    ## back to physical space [nmember,m]
+    #perturbation_phy = Da@perturbation.T
+
+    return perturbation.T  #[M,nmember]
 
 def singular_vectors(m,nsv,scale,tol,P,r0,rf,TLM,ADM,nmember,Da,rescale=0.5,verbose=False):
     '''
