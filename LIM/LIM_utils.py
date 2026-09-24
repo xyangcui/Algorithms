@@ -803,7 +803,7 @@ def get_modal_variance(x,u,v):
     z = np.zeros([len(u[0,:]),len(x[0,:])],complex)  #[number,time]
     # Get variance in each mode
     #v_tr = np.transpose(v)  #Get transpose of v [number,space]
-    z = v.conj().T @ x
+    z = v.T @ x
     varMode = np.nanmean(np.abs(z)**2, axis=1)
         
     return varMode
