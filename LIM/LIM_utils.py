@@ -96,7 +96,6 @@ Outputs      : b_alpha - values of Beta (not in a diagonal matrix as used in the
     beta = np.zeros((nDat, nDat), complex)
     np.fill_diagonal(beta, b_alpha)
 
- 
     #Need to normalize u so that u_transpose*v = identitity matrix, and u*v_transpose = identity matrix as well 
     normFactors = np.dot(np.transpose(u),v)
     normU       = np.dot(u,LA.inv(normFactors))
@@ -788,11 +787,11 @@ def dynamical_filter(X,v,u):
       Output:
         RC: reconstructed state vectors. [space,time]
     '''
-    return u @ (v.T @ X)
+    return u @ (v.conj().T @ X)
 
-def get_variance(x,u,v):
+def get_modal_variance(x,u,v):
     '''
-      Description: get variance of each eignvector.
+      Description: get modal variance of each eignvector.
       Input:
         x: LIM state [space,time]
         v: selected eignvectors of adjoint L. [space, number]
@@ -802,21 +801,27 @@ def get_variance(x,u,v):
     '''   
     # Compute z while allowing for NaNs...
     z = np.zeros([len(u[0,:]),len(x[0,:])],complex)  #[number,time]
-
     # Get variance in each mode
-    varMode = np.zeros([len(u[0,:])])
-
-    v_tr = np.transpose(v)  #Get transpose of v [number,space]
-
-    for iMd in range(len(u[0,:])):                #Loop over modes 
-        for iT in range(len(x[0,:])):       #Loop over length of time in record 
-            for iSt in range(len(x[:,0])):        #Loop over station 
-                z[iMd,iT] += np.nansum(v_tr[iMd,iSt] * data[iSt,iT])  #Compute z, the timeseries of the mode 
-            #Get the variance of the mode 
-            varMode[iMd] += np.nansum([(z[iMd,iT].real**2), (z[iMd,iT].imag**2)])
-        
-        varMode[iMd] = varMode[iMd]/len(data[0,:])
+    #v_tr = np.transpose(v)  #Get transpose of v [number,space]
+    z = v.conj().T @ x
+    varMode = np.nanmean(np.abs(z)**2, axis=1)
         
     return varMode
+
+def eigenvector_point_contribution(u, j):
+    """
+    get point j's contribution to the jth eigenvector.
+    u : [space, mode]
+    j : selected mode
+
+    return:
+        contribution [space]
+    """
+    uj = u[:, j]
+
+    contribution = np.abs(uj)**2
+    contribution /= np.sum(contribution)
+
+    return contribution
 
 
