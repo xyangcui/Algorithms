@@ -631,7 +631,7 @@ def enks_letkf_update_array(E,E0,R,y,H,loc,gamma=1.0):
      loc: localization matrix. Default is no localization. (ndim, nobs)
     Output
       E: posterior estimation (ndims, nens)
-      E0update: 
+      E0update - E0: update infomation 
     '''
     from scipy.linalg import solve
     D, nens = E.shape[0], E.shape[1]
@@ -641,6 +641,7 @@ def enks_letkf_update_array(E,E0,R,y,H,loc,gamma=1.0):
     # smoother mean.
     E0mean = np.nanmean(E0, axis=1, keepdims=True)
     E0anom = E0 - E0mean
+    E0update = E0.copy()
     # model to measurement
     Y  = H(E)
     ym = np.nanmean(Y,1); yp = Y - ym[:, None]
@@ -695,7 +696,7 @@ def enks_letkf_update_array(E,E0,R,y,H,loc,gamma=1.0):
             E[i, :] = xbb[i, 0] + xbp[i, :] @ trans_matrix            
             E0[i,:,:] = E0mean[i, 0, :][None, :] + np.einsum('dec,ef->dfc',E0anom[i, :, :],trans_matrix)
 
-    return E
+    return E, (E0update-E0)
 
 # ETKF
 def etkf_update_array_theory(E,R,R_inv,y,H,gamma=1.0):
@@ -812,7 +813,7 @@ def enks_etkf_update_array(E,E0,R,y,H,gamma=1.0):
       gamma: parameter for inflation. default is 1.0, no inflation
     Output
       E: posterior estimation (ndims, nens)
-      E0_update: 
+      E0update - E0: update infomation
     '''
     from scipy.linalg import solve
     D, nens = E.shape[0], E.shape[1]
@@ -850,13 +851,13 @@ def enks_etkf_update_array(E,E0,R,y,H,gamma=1.0):
     # smoother.
     E0mean = np.nanmean(E0, axis=1, keepdims=True)
     E0anom = E0 - E0mean
-
+    E0Update = E0.copy()
     if E0.ndim == 2:
         E0update = E0mean + E0anom @ trans_matrix
     else:
         E0update = E0mean + np.einsum('dec,ef->dfc',E0anom,trans_matrix)
 
-    return E, E0update
+    return E, (E0update-E0)
 # EAKF
 
 # serial SRF
