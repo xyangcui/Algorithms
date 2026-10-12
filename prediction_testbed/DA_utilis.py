@@ -689,12 +689,12 @@ def enks_letkf_update_array(E,E0,R,y,H,loc,gamma=1.0):
             trans_matrix = get_local_transform(i)
             E[i, :] = xbb[i, 0] + xbp[i, :] @ trans_matrix
             # smoother
-            E0[i,:] = E0mean[i, 0] + E0anom[i, :] @ trans_matrix
+            E0update[i,:] = E0mean[i, 0] + E0anom[i, :] @ trans_matrix
     else:
         for i in range(D):
             trans_matrix = get_local_transform(i)
             E[i, :] = xbb[i, 0] + xbp[i, :] @ trans_matrix            
-            E0[i,:,:] = E0mean[i, 0, :][None, :] + np.einsum('dec,ef->dfc',E0anom[i, :, :],trans_matrix)
+            E0update[i,:,:] = E0mean[i, 0, :][None, :] + np.einsum('dec,ef->dfc',E0anom[i, :, :],trans_matrix)
 
     return E, (E0update-E0)
 
